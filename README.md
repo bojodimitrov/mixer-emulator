@@ -2,23 +2,39 @@
 
 ## Overview
 
-This repository is a Python file-backed database emulator. It includes fixed-size binary records, hash lookup, a sorted flat index, a B+ tree index, and a simple microservice wrapper.
+This repository is a Python file-backed database emulator built around fixed-size binary records and hash-based lookup strategies. The project now includes:
+
+- A fixed-size mmap-backed database file
+- Three lookup strategies: linear scan, sorted flat index, and B+ tree
+- A thread-pool database server for concurrent request handling
+- A lightweight service/client wrapper for request simulation
+- Writable sorted-index and B+ tree update paths
+- Cross-process file locking so multiple readers can share the database while writes are serialized
 
 ## Project Structure
 
 ```
 .
+├── db/
+│   ├── mixer_emulator.bpt
+│   ├── mixer_emulator.idx
+│   ├── tmp/
+│   └── tmp_btree/
 ├── src/
 │   ├── emulator/
 │   │   ├── __init__.py
 │   │   ├── client.py
 │   │   ├── main.py
 │   │   ├── service.py
+│   │   ├── demonstrations/
+│   │   │   ├── __init__.py
+│   │   │   └── database_demo.py
 │   │   ├── storage/
 │   │   │   ├── __init__.py
 │   │   │   ├── b_tree_index.py
 │   │   │   ├── constants.py
 │   │   │   ├── database.py
+│   │   │   ├── server.py
 │   │   │   └── sorted_index.py
 │   │   └── utils.py
 │   └── tests/
@@ -30,6 +46,18 @@ This repository is a Python file-backed database emulator. It includes fixed-siz
 ├── requirements.txt
 └── README.md
 ```
+
+## Storage Layout
+
+The project uses a src layout. Install it in editable mode or set `PYTHONPATH=src` before running modules directly.
+
+Default generated files:
+
+- `db/mixer_emulator_bin.db`: fixed-size record database
+- `db/mixer_emulator.idx`: sorted `(hash, id)` flat index
+- `db/mixer_emulator.bpt`: B+ tree index
+- `db/tmp/`: temporary chunk files used while building `.idx`
+- `db/tmp_btree/`: temporary chunk files used while building `.bpt`
 
 ## Installation
 
@@ -45,12 +73,30 @@ Install in editable mode:
 pip install -e .
 ```
 
+Alternative without editable install:
+
+```bash
+PYTHONPATH=src
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+```
+
 ## Usage
 
 Build the database:
 
 ```bash
 python -m emulator.storage.database
+```
+
+Build a smaller database slice for quick local testing:
+
+```bash
+python -m emulator.storage.database --start 0 --end 100000
 ```
 
 Build the sorted index:
@@ -65,11 +111,47 @@ Build the B+ tree index:
 python -m emulator.storage.b_tree_index
 ```
 
-Run the demo:
+Run the demo application:
 
 ```bash
 python -m emulator.main
 ```
+
+The demo:
+
+- Creates three `DatabaseServer` instances, one per lookup strategy
+- Reads a random record directly from the database
+- Compares linear, sorted-index, and B+ tree lookup latency
+- Executes a writable B+ tree update and verifies the old hash disappears
+
+## Server And Service Layers
+
+The repository has two request-handling layers.
+
+### `DatabaseServer`
+
+`emulator.storage.server.DatabaseServer` is the main concurrent execution layer. It uses a fixed-size thread pool and a shared `FileDB` instance to process requests.
+
+Supported request types:
+
+- `Query`: resolve a `(hash -> (id, name))` lookup
+- `Command`: update an existing record name
+
+Example:
+
+```python
+from emulator.storage import DatabaseRequest, DatabaseServer
+from emulator.storage.database import FileDB
+
+server = DatabaseServer(lookup_strategy=FileDB.STRATEGY_BPLUS)
+result = server.handle_request(DatabaseRequest("Query", {"hash_bytes": some_hash}))
+updated = server.handle_request(DatabaseRequest("Command", {"id": 42, "new_name": "zzzzz"}))
+server.close()
+```
+
+### `Microservice` / `Client`
+
+`emulator.service.Microservice` and `emulator.client.Client` provide a lightweight queue-based wrapper that can simulate service latency. This layer is useful for demonstrations, but the thread-pool `DatabaseServer` is the more complete concurrency primitive in the current codebase.
 
 ## Running Tests
 
@@ -78,6 +160,15 @@ Run tests:
 ```bash
 pytest src/tests
 ```
+
+Current test coverage includes:
+
+- Core database read and linear-hash lookup behavior
+- Concurrent reads across multiple `FileDB` connections
+- Sorted index build, lookup, insert, delete, and update dispatch
+- B+ tree build, lookup, insert, delete, update, and small-capacity regression cases
+
+There are currently 17 unit tests across the three test modules.
 
 ## File Formats
 
@@ -175,6 +266,23 @@ Internal pages contain: [child_page] [separator_key] [child_page] ...
 
 Lookup path: root → internal nodes → leaf → binary search inside the leaf.
 
+## Lookup Strategies
+
+`FileDB` supports three lookup modes:
+
+- `linear`: scan the database file directly
+- `sorted`: binary search against `db/mixer_emulator.idx`
+- `bplus`: traverse `db/mixer_emulator.bpt`
+
+Example:
+
+```python
+from emulator.storage.database import FileDB
+
+db = FileDB(lookup_strategy=FileDB.STRATEGY_BPLUS)
+result = db.query_by_hash(hash_bytes)
+```
+
 ## Query Methods
 
 | Method                | Time     | Space | Setup           |
@@ -204,9 +312,20 @@ Relative to linear lookup in this run:
 
 This is an illustrative example, not a strict performance guarantee.
 
+## Concurrency And Locking
+
+`FileDB` now uses a sidecar lock file at `db/mixer_emulator_bin.db.lock`.
+
+- Read operations acquire a shared lock
+- Write operations acquire an exclusive lock
+- Separate `FileDB` instances can read concurrently
+- Writes are serialized across processes and threads
+
+This locking is implemented with platform-specific primitives and works on Windows and Unix-like systems.
+
 ## Update Operations
 
-The B+ tree supports writable updates. The sorted index does not; after data changes, `.idx` must be rebuilt.
+Both on-disk index types now have writable update support, but with different tradeoffs.
 
 ### Via Database Class
 
@@ -216,16 +335,25 @@ from emulator.storage.database import FileDB
 db = FileDB(lookup_strategy=FileDB.STRATEGY_BPLUS)
 # Update record's name and sync B-tree index
 db.update_record_with_bplus_index(
-    record_id=42,
-    new_name="newname"  # Must be 5 lowercase ASCII letters
+    42,
+    "zzzzz"  # Must be 5 lowercase ASCII letters
 )
+```
+
+You can also use generic dispatch based on the configured lookup strategy:
+
+```python
+from emulator.storage.database import FileDB
+
+db = FileDB(lookup_strategy=FileDB.STRATEGY_SORTED)
+db.update_record(42, "zzzzz")
 ```
 
 This operation:
 
 1. Reads the original record to get the old hash
 2. Computes the new hash from (id, new_name)
-3. Updates the database file and B+ tree index atomically
+3. Updates the database file and the active index
 4. Rolls back database changes if index update fails
 
 ### Via B-tree Index Directly
@@ -241,25 +369,40 @@ with BPlusTreeIndex(writable=True) as idx:
     )
 ```
 
+### Via Sorted Index Directly
+
+```python
+from emulator.storage.sorted_index import HashIndex
+
+with HashIndex(writable=True) as idx:
+    idx.delete(old_hash_bytes)
+    idx.insert(new_hash_bytes, 42)
+```
+
 ### Implementation Details
 
-The B+ tree uses incremental writes: follow one root-to-leaf path, update the target page, and propagate splits or separator changes only if needed. That is why `.bpt` can be updated online while `.idx` still needs a rebuild.
+The two writable index paths behave differently:
+
+- `.idx` remains a sorted flat file, so insert/delete/update shift file contents and are `O(n)` in the size of the index
+- `.bpt` uses incremental page-local writes: follow one root-to-leaf path, update the target page, and propagate splits or separator changes only if needed
+
+The B+ tree write path no longer rebuilds the full tree for ordinary insert/update/delete operations.
 
 ### Insert and Delete Operations
 
-| Index  | Insert/Delete behavior                                                                               |
-| ------ | ---------------------------------------------------------------------------------------------------- |
-| `.idx` | Global sort must be preserved, so the file is rebuilt with `python -m emulator.storage.sorted_index` |
-| `.bpt` | Supports online writable insert/delete/update through the tree itself                                |
+| Index  | Insert/Delete behavior                                                     |
+| ------ | -------------------------------------------------------------------------- |
+| `.idx` | Writable, but entries are shifted in-place so large files remain expensive |
+| `.bpt` | Supports online writable insert/delete/update through the tree itself      |
 
 ### Time Complexity
 
-| Operation | `.idx`                            | `.bpt`                                                        |
-| --------- | --------------------------------- | ------------------------------------------------------------- |
-| Lookup    | `O(log n)`                        | `O(log n)`                                                    |
-| Insert    | Rebuild, effectively `O(n log n)` | Typically `O(log n)`                                          |
-| Update    | Rebuild, effectively `O(n log n)` | Typically `O(log n)`                                          |
-| Delete    | Rebuild, effectively `O(n log n)` | Usually `O(log n)`; can be worse when unlinking an empty leaf |
+| Operation | `.idx`     | `.bpt`                                                        |
+| --------- | ---------- | ------------------------------------------------------------- |
+| Lookup    | `O(log n)` | `O(log n)`                                                    |
+| Insert    | `O(n)`     | Typically `O(log n)`                                          |
+| Update    | `O(n)`     | Typically `O(log n)`                                          |
+| Delete    | `O(n)`     | Usually `O(log n)`; can be worse when unlinking an empty leaf |
 
 **Limitations:**
 
