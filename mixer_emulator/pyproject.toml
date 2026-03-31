@@ -1,12 +1,16 @@
 [tool.poetry]
-name = "my-python-project"
+name = "mixer-emulator"
 version = "0.1.0"
-description = "A small Python project."
+description = "A file-backed database emulator with hash indexing."
 authors = ["Your Name <youremail@example.com>"]
 license = "MIT"
+packages = [{ include = "emulator", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

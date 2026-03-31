@@ -101,3 +101,6 @@ dmypy.json
 # Database files (optional)
 *.sqlite3
 *.db
+
+# For this project:
+db/
