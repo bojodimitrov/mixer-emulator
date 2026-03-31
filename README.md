@@ -149,24 +149,24 @@ Page Layout (4096 bytes):
 Tree example:
 
 ```
-                    ┌──────────────┐
-                    │    Header    │ (Page 0)
-                    │   Root: P3   │
-                    └───────┬──────┘
-                            │
-              ┌─────────────┼──────────────┐
-              │             │              │
-           ┌──▼───┐      ┌──▼───┐      ┌───▼──┐
-           │ Int  │      │ Int  │      │ Int  │
-           │ P3   │      │ P4   │      │ P5   │
-           └──┬─┬─┘      └──┬─┬─┘      └──┬───┘
-              │ │           │ │           │
-        ┌─────┘ │      ┌────┘ └─┐       ┌─┘
-        │       │      │        │       │
-    ┌───▼──┐ ┌──▼──┐ ┌──▼──┐ ┌──▼──┐ ┌──▼──┐
-    │ Leaf │ │ Leaf│ │ Leaf│ │ Leaf│ │ Leaf│
-    │ P1   │ │ P2  │ │ P6  │ │ P7  │ │ P8  │
-    └──────┘ └──┬──┘ └─────┘ └─────┘ └─────┘
+                ┌──────────────┐
+                │   Header P0  │
+                │   Root: P9   │
+                └───────┬──────┘
+                        │
+          ┌─────────────┼──────────────┐
+          │             │              │
+       ┌──▼───┐      ┌──▼───┐      ┌───▼──┐
+       │ Int  │      │ Int  │      │ Int  │
+       │ P6   │      │ P7   │      │ P8   │
+       └──┬─┬─┘      └──┬─┬─┘      └──┬───┘
+          │ │           │ └────────┐  │
+        ┌─┘ └────┐      └─┐        │  └─────┐
+        │        │        │        │        │
+    ┌───▼──┐ ┌───▼──┐ ┌───▼──┐ ┌───▼──┐ ┌───▼──┐
+    │ Leaf │ │ Leaf │ │ Leaf │ │ Leaf │ │ Leaf │
+    │ P1   │ │ P2   │ │ P3   │ │ P4   │ │ P5   │
+    └──────┘ └──┬───┘ └──────┘ └──────┘ └──────┘
                linked via next_page pointers ───→
 
 Leaf pages contain: [hash₁, id₁] [hash₂, id₂] ... (sorted)
@@ -193,6 +193,14 @@ Sample output from one run on this project data.
 | Linear lookup | (7392683, 'qepxz') | 1832.717  |
 | Sorted lookup | (7392683, 'qepxz') | 13.655    |
 | B+ lookup     | (7392683, 'qepxz') | 1.156     |
+
+Relative to linear lookup in this run:
+
+| Strategy | Speedup vs linear |
+| -------- | ----------------- |
+| Linear   | 1.0x              |
+| Sorted   | 134.2x            |
+| B+ tree  | 1585.4x           |
 
 This is an illustrative example, not a strict performance guarantee.
 
