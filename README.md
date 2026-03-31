@@ -7,7 +7,7 @@ This repository is a Python file-backed database emulator. It includes fixed-siz
 ## Project Structure
 
 ```
-mixer_emulator/
+.
 ├── src/
 │   ├── emulator/
 │   │   ├── __init__.py
@@ -182,6 +182,19 @@ Lookup path: root → internal nodes → leaf → binary search inside the leaf.
 | Linear scan           | O(n)     | O(1)  | None            |
 | Binary search on .idx | O(log n) | O(1)  | Build .idx file |
 | B+ tree               | O(log n) | O(1)  | Build .bpt file |
+
+## Example Benchmark (Single Run)
+
+Sample output from one run on this project data.
+
+| Step          | Result             | Time (ms) |
+| ------------- | ------------------ | --------- |
+| Read record   | id=7392683, qepxz  | 0.171     |
+| Linear lookup | (7392683, 'qepxz') | 1832.717  |
+| Sorted lookup | (7392683, 'qepxz') | 13.655    |
+| B+ lookup     | (7392683, 'qepxz') | 1.156     |
+
+This is an illustrative example, not a strict performance guarantee.
 
 ## Update Operations
 
