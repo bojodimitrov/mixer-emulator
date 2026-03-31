@@ -52,6 +52,19 @@ class BPlusTreeBuilder:
         os.makedirs(self.tmp_dir, exist_ok=True)
         os.makedirs(os.path.dirname(self.out_path) or ".", exist_ok=True)
 
+    @staticmethod
+    def _print_progress(
+        prefix: str, current: int, total: int, suffix: str = ""
+    ) -> None:
+        bar_width = 30
+        pct = (current / total) * 100 if total else 100.0
+        filled = int((current / total) * bar_width) if total else bar_width
+        bar = "#" * filled + "-" * (bar_width - filled)
+        text = f"\r{prefix} [{bar}] {pct:6.2f}% {current}/{total}"
+        if suffix:
+            text += f" | {suffix}"
+        print(text, end="" if current < total else "\n", flush=True)
+
     def build(self) -> None:
         if not os.path.exists(self.db_path):
             raise FileNotFoundError(f"database file not found: {self.db_path}")
@@ -105,9 +118,11 @@ class BPlusTreeBuilder:
                     range(0, total_records, self.chunk_size), 1
                 ):
                     end = min(total_records, start + self.chunk_size)
-                    print(
-                        f"Extracting chunk {chunk_number}/{chunk_count}: records {start}..{end - 1}",
-                        flush=True,
+                    self._print_progress(
+                        "Extracting chunks",
+                        chunk_number,
+                        chunk_count,
+                        suffix=f"records {start}..{end - 1}",
                     )
                     entries: List[Tuple[bytes, int]] = []
                     for id_ in range(start, end):
@@ -129,7 +144,7 @@ class BPlusTreeBuilder:
                 db_mm.close()
 
         print(f"Merging {len(tmp_files)} chunk files", flush=True)
-        self._merge_sorted_chunks(tmp_files, out_path)
+        self._merge_sorted_chunks(tmp_files, out_path, total_records)
 
         for p in tmp_files:
             try:
@@ -147,12 +162,18 @@ class BPlusTreeBuilder:
                 hb, id_ = struct.unpack(INDEX_STRUCT, data)
                 yield (hb, id_)
 
-    def _merge_sorted_chunks(self, chunk_paths: List[str], out_path: str) -> None:
+    def _merge_sorted_chunks(
+        self, chunk_paths: List[str], out_path: str, total_records: int
+    ) -> None:
         """Merge sorted chunk files into a single sorted output file."""
         iterators = [self._iter_chunk(p) for p in chunk_paths]
         with open(out_path, "wb") as out:
+            merged = 0
             for hb, id_ in heapq.merge(*iterators):
                 out.write(struct.pack(INDEX_STRUCT, hb, id_))
+                merged += 1
+                if merged % 10000 == 0 or merged == total_records:
+                    self._print_progress("Merging pairs", merged, total_records)
 
     def _write_leaf_level(self, src, dst, total_records: int) -> List[int]:
         leaf_pages: List[int] = []

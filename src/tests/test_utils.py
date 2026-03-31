@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -49,6 +50,32 @@ class TestFileDB(unittest.TestCase):
         missing_hash = b"\x00" * 32
 
         self.assertIsNone(self.db.query_by_hash(missing_hash))
+
+    def test_multiple_connections_can_read_concurrently(self):
+        exceptions = []
+        start_event = threading.Event()
+
+        def worker(record_id: int):
+            local_db = database_module.FileDB()
+            try:
+                start_event.wait(timeout=2)
+                id_read, name, hash_bytes = local_db.read_record(record_id)
+                result = local_db.query_by_hash(hash_bytes)
+                self.assertEqual(id_read, record_id)
+                self.assertEqual(result, (record_id, name))
+            except Exception as exc:
+                exceptions.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+
+        start_event.set()
+
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(exceptions, [])
 
 
 if __name__ == "__main__":

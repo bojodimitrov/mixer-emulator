@@ -1,5 +1,7 @@
 import queue
 from .service import Request
+from .storage.server import DatabaseRequest
+
 
 class Client:
     def __init__(self, service):

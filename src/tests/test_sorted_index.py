@@ -64,6 +64,51 @@ class TestSortedIndex(unittest.TestCase):
         with sorted_index_module.HashIndex() as index:
             self.assertIsNone(index.query_by_hash(b"\xff" * 32))
 
+    def test_hash_index_writable_insert_and_delete(self):
+        inserted_hash = b"\x00" * 32
+        inserted_id = 999_999
+
+        with sorted_index_module.HashIndex(writable=True) as index:
+            self.assertIsNone(index.query_by_hash(inserted_hash))
+            index.insert(inserted_hash, inserted_id)
+
+        with sorted_index_module.HashIndex() as index:
+            self.assertEqual(index.query_by_hash(inserted_hash), inserted_id)
+
+        entries = []
+        with open(self.index_path, "rb") as index_file:
+            while True:
+                data = index_file.read(sorted_index_module.INDEX_RECORD_SIZE)
+                if not data:
+                    break
+                entries.append(struct.unpack(sorted_index_module.INDEX_STRUCT, data))
+
+        self.assertEqual(len(entries), 129)
+        self.assertEqual(entries, sorted(entries, key=lambda entry: entry[0]))
+
+        with sorted_index_module.HashIndex(writable=True) as index:
+            self.assertTrue(index.delete(inserted_hash))
+            self.assertFalse(index.delete(inserted_hash))
+
+        with sorted_index_module.HashIndex() as index:
+            self.assertIsNone(index.query_by_hash(inserted_hash))
+
+    def test_database_update_record_dispatch_updates_sorted_index(self):
+        record_id = 42
+        old_hash = self.db.read_record(record_id)[2]
+        new_name = "zzzzz"
+
+        self.assertTrue(self.db.update_record(record_id, new_name))
+
+        id_read, name_read, new_hash = self.db.read_record(record_id)
+        self.assertEqual(id_read, record_id)
+        self.assertEqual(name_read, new_name)
+        self.assertNotEqual(old_hash, new_hash)
+
+        with sorted_index_module.HashIndex() as index:
+            self.assertIsNone(index.query_by_hash(old_hash))
+            self.assertEqual(index.query_by_hash(new_hash), record_id)
+
 
 if __name__ == "__main__":
     unittest.main()
