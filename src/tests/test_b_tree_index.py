@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import emulator.storage.b_tree_index as btree_module
 import emulator.storage.database as database_module
+from emulator.utils import compute_hash_for
 
 
 class TestBPlusTreeIndex(unittest.TestCase):
@@ -91,7 +92,7 @@ class TestBPlusTreeIndex(unittest.TestCase):
 
         # Query by new hash should return the record with new name
         result = self.db.query_by_hash(
-            database_module.FileDB.compute_hash_for(record_id, new_name.encode("ascii"))
+            compute_hash_for(record_id, new_name.encode("ascii"))
         )
         self.assertIsNotNone(result)
         if result is not None:

@@ -1,59 +1,86 @@
-import threading
+import random
 import time
 import queue
-from typing import Dict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict
 
-from .storage.server import DatabaseRequest, DatabaseServer, LookupStrategy
+from .storage.server import DatabaseRequest
 
 
 class Request:
-    def __init__(self, op: str, payload: Dict, reply_q: queue.Queue):
-        self.op = op
-        self.payload = payload
+    def __init__(self, method: str, payload: Dict, reply_q: queue.Queue):
+        self.method = method.upper()
+        if self.method == "GET":
+            if "hash" not in payload:
+                raise ValueError("GET payload must include 'hash'")
+            self.payload = {"hash": payload["hash"]}
+        elif self.method == "POST":
+            if "id" not in payload or "new_name" not in payload:
+                raise ValueError("POST payload must include 'id' and 'new_name'")
+            self.payload = {"id": payload["id"], "new_name": payload["new_name"]}
+        else:
+            raise ValueError("method must be GET or POST")
         self.reply_q = reply_q
 
 
-# Microservice class:
-#  - I want to receive request again, this time either GET or POST: if it is a GET, call the DatabaseClient Query method with the hash that will be in the GET request, if it is a POST then call the command method
-# - I want to simulate latency with some jitter
-# - I want to be able to serve many requests concurrently as the DatabaseServer
-
-
 class Microservice:
-    def __init__(self, db, latency_ms: int = 20):
-        self.db = db
-        self.latency = latency_ms / 1000.0
-        self.q = queue.Queue()
-        self._shutdown = threading.Event()
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
+    def __init__(
+        self,
+        db_client,
+        latency_ms: int = 50,
+        pool_size: int = 500,
+    ):
+        if pool_size <= 0:
+            raise ValueError("pool_size must be positive")
 
-    def _worker(self):
-        while not self._shutdown.is_set():
-            try:
-                req: Request = self.q.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            # simulate latency
-            time.sleep(self.latency)
-            if req.op == "insert":
-                pos = self.db.insert(req.payload)
-                req.reply_q.put({"status": "ok", "pos": pos})
-            elif req.op == "query":
-                results = list(
-                    self.db.query(req.payload.get("predicate", lambda x: True))
-                )
-                req.reply_q.put({"status": "ok", "results": results})
-            else:
-                req.reply_q.put({"status": "error", "error": "unknown op"})
-            self.q.task_done()
+        self.db_client = db_client
+        self.latency = max(0.0, latency_ms / 1000.0)
+        self._executor = ThreadPoolExecutor(
+            max_workers=int(pool_size),
+            thread_name_prefix="microservice",
+        )
+        self._is_shutdown = False
+
+    def _simulate_latency(self) -> None:
+        jitter_sec = random.randint(-10, 10) / 1000.0
+        delay = self.latency + jitter_sec
+        time.sleep(max(0.0, delay))
+
+    def _to_hash_bytes(self, hash_value):
+        if isinstance(hash_value, (bytes, bytearray)):
+            return bytes(hash_value)
+        if isinstance(hash_value, str):
+            return bytes.fromhex(hash_value)
+        raise ValueError("GET payload must include hash as bytes or hex string")
+
+    def _process_request(self, req: Request) -> None:
+        try:
+            self._simulate_latency()
+
+            if req.method == "GET":
+                result = self.db_client.query(self._to_hash_bytes(req.payload["hash"]))
+                req.reply_q.put({"status": "ok", "result": result})
+                return
+
+            if req.method == "POST":
+                id_ = req.payload["id"]
+                new_name = req.payload["new_name"]
+                updated = self.db_client.command(id_, new_name)
+                req.reply_q.put({"status": "ok", "result": updated})
+
+        except Exception as exc:
+            req.reply_q.put({"status": "error", "error": str(exc)})
 
     def send(self, req: Request):
-        self.q.put(req)
+        if self._is_shutdown:
+            req.reply_q.put({"status": "error", "error": "service is shut down"})
+            return
+
+        self._executor.submit(self._process_request, req)
 
     def stop(self):
-        self._shutdown.set()
-        self.thread.join(timeout=1)
+        self._is_shutdown = True
+        self._executor.shutdown(wait=True)
 
 
 class DatabaseClient:

@@ -4,6 +4,7 @@ from typing import Tuple
 
 from ..storage.database import FileDB
 from ..storage.server import DatabaseRequest, DatabaseServer
+from ..utils import compute_hash_for
 
 
 def _measure_lookup(
@@ -63,11 +64,7 @@ def run_update_demo(linear_db: FileDB, bplus_server: DatabaseServer) -> None:
     updated_result = bplus_server.handle_request(
         DatabaseRequest(
             "Query",
-            {
-                "hash_bytes": FileDB.compute_hash_for(
-                    update_id, updated_name.encode("ascii")
-                )
-            },
+            {"hash_bytes": compute_hash_for(update_id, updated_name.encode("ascii"))},
         )
     )
     old_result = bplus_server.handle_request(

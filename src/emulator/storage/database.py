@@ -1,12 +1,12 @@
 import argparse
 from contextlib import contextmanager
-import hashlib
 import mmap
 import os
 import struct
 import time
 from typing import Literal, Optional, Tuple
 
+from ..utils import compute_hash_for, id_to_name
 from .constants import (
     RECORD_STRUCT,
     RECORD_SIZE,
@@ -109,20 +109,6 @@ class FileDB:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
-    def _id_to_name(idx: int) -> bytes:
-        result = bytearray(5)
-        n = idx
-        for i in range(4, -1, -1):
-            result[i] = ord("a") + (n % 26)
-            n //= 26
-        return bytes(result)
-
-    @staticmethod
-    def compute_hash_for(id_: int, name: bytes) -> bytes:
-        s = f"{id_}:{name.decode('ascii')}".encode("utf-8")
-        return hashlib.sha256(s).digest()
-
-    @staticmethod
     def _validate_name(name_str: str, field_name: str = "name_str") -> None:
         if (
             not isinstance(name_str, str)
@@ -155,8 +141,8 @@ class FileDB:
                 mm = mmap.mmap(f.fileno(), 0)
                 try:
                     for i, id_ in enumerate(range(start, end), 1):
-                        name = self._id_to_name(id_)
-                        hashb = self.compute_hash_for(id_, name)
+                        name = id_to_name(id_)
+                        hashb = compute_hash_for(id_, name)
                         packed = struct.pack(RECORD_STRUCT, id_, name, hashb)
                         off = id_ * RECORD_SIZE
                         mm[off : off + RECORD_SIZE] = packed
@@ -254,7 +240,7 @@ class FileDB:
                 raise IndexError("id out of range")
 
             new_name = new_name_str.encode("ascii")
-            new_hash = self.compute_hash_for(id_, new_name)
+            new_hash = compute_hash_for(id_, new_name)
             packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
 
             with open(DEFAULT_DB_PATH, "r+b") as f:
@@ -282,7 +268,7 @@ class FileDB:
                 _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
 
                 new_name = new_name_str.encode("ascii")
-                new_hash = self.compute_hash_for(id_, new_name)
+                new_hash = compute_hash_for(id_, new_name)
                 if new_hash == old_hash:
                     return True
 
@@ -341,7 +327,7 @@ class FileDB:
                 _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
 
                 new_name = new_name_str.encode("ascii")
-                new_hash = self.compute_hash_for(id_, new_name)
+                new_hash = compute_hash_for(id_, new_name)
                 packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
 
                 f.seek(id_ * RECORD_SIZE)
