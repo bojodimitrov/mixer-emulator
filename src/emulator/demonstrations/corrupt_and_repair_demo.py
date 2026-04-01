@@ -40,7 +40,7 @@ def run_demo(*, seed: int | None = None) -> None:
     db_server.start()
 
     svc_server = MicroserviceServer(
-        latency_ms=0,
+        latency_ms=20,
         pool_size=50,
     )
     svc_server.start()

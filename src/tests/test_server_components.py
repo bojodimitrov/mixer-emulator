@@ -1,4 +1,6 @@
 import os
+import socket
+import struct
 import tempfile
 import time
 import unittest
@@ -145,6 +147,24 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         pool = client._pool
         assert pool is not None
         self.assertGreaterEqual(pool.qsize(), 3)
+
+    def test_server_returns_error_for_malformed_json_frame(self):
+        from emulator.transport_layer.transport import recv_message, send_message
+
+        with socket.create_connection(("127.0.0.1", self.db_port), timeout=1.0) as sock:
+            sock.settimeout(1.0)
+
+            bad_payload = b"{not-json"
+            sock.sendall(struct.pack(">I", len(bad_payload)) + bad_payload)
+
+            err = recv_message(sock)
+            self.assertEqual(err.get("status"), "error")
+            self.assertIn("invalid json payload", str(err.get("error", "")).lower())
+
+            # Server should remain responsive on the same keep-alive connection.
+            send_message(sock, {"op": "Close"})
+            ok = recv_message(sock)
+            self.assertEqual(ok.get("status"), "ok")
 
 
 class TestSocketMicroserviceErrorPaths(unittest.TestCase):

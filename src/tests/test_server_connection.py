@@ -72,6 +72,13 @@ class TestSocketDecoupling(unittest.TestCase):
         self.assertEqual(resp3["status"], "ok")
         self.assertIsNone(resp3["result"])
 
+    def test_unsupported_method_returns_error(self):
+        client = MicroserviceClient()
+
+        resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"})
+        self.assertEqual(resp.get("status"), "error")
+        self.assertIn("unsupported method", str(resp.get("error", "")).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

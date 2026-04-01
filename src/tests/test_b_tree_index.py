@@ -150,6 +150,31 @@ class TestBPlusTreeIndex(unittest.TestCase):
                     expected_id, _, hash_bytes = self.db.read_record(check_id)
                     self.assertEqual(index.query_by_hash(hash_bytes), expected_id)
 
+    def test_bplus_update_rolls_back_on_non_runtime_error(self):
+        record_id = 21
+        id_before, name_before, old_hash = self.db.read_record(record_id)
+        self.assertEqual(id_before, record_id)
+
+        with patch.object(
+            btree_module.BPlusTreeIndex,
+            "update",
+            side_effect=ValueError("forced failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "forced failure"):
+                self.db.update_record_with_bplus_index(record_id, "zzzzz")
+
+        # DB row must be fully rolled back.
+        id_after, name_after, hash_after = self.db.read_record(record_id)
+        self.assertEqual(id_after, record_id)
+        self.assertEqual(name_after, name_before)
+        self.assertEqual(hash_after, old_hash)
+
+        # Index must still resolve old hash and not include the would-be new hash.
+        with btree_module.BPlusTreeIndex() as index:
+            self.assertEqual(index.query_by_hash(old_hash), record_id)
+            new_hash = compute_hash_for(record_id, b"zzzzz")
+            self.assertIsNone(index.query_by_hash(new_hash))
+
 
 if __name__ == "__main__":
     unittest.main()
