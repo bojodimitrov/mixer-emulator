@@ -24,13 +24,15 @@ def print_time(message: str, operation: Callable[[], T]) -> T:
     start = time.perf_counter()
     result = operation()
     elapsed = time.perf_counter() - start
+    measurement = "seconds"
 
-    if elapsed > 1000:
+    if elapsed < 1:
         elapsed *= 1000
+        measurement = "ms"
 
     if result is None:
-        print(f"{message} completed in ({elapsed:.3f} ms)")
+        print(f"{message} completed in ({elapsed:.3f} {measurement})")
     else:
-        print(f"{message} completed in ({elapsed:.3f} ms) -> {result} ")
+        print(f"{message} completed in ({elapsed:.3f} {measurement}) -> {result} ")
 
     return result
