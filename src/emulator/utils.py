@@ -23,6 +23,14 @@ def compute_hash_for(id_: int, name: bytes) -> bytes:
 def print_time(message: str, operation: Callable[[], T]) -> T:
     start = time.perf_counter()
     result = operation()
-    elapsed_ms = (time.perf_counter() - start) * 1000
-    print(f"({elapsed_ms:.3f} ms) ==> {message} -> {result} ")
+    elapsed = time.perf_counter() - start
+
+    if elapsed > 1000:
+        elapsed *= 1000
+
+    if result is None:
+        print(f"{message} completed in ({elapsed:.3f} ms)")
+    else:
+        print(f"{message} completed in ({elapsed:.3f} ms) -> {result} ")
+
     return result

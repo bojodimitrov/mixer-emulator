@@ -752,7 +752,7 @@ def build_bplus_tree(
     out_path: Optional[str] = None,
 ) -> None:
     builder = BPlusTreeBuilder(db_path=db_path, out_path=out_path)
-    print_time("B+ tree build completed in ", lambda: builder.build())
+    print_time("B+ tree build", lambda: builder.build())
 
 
 def main() -> None:

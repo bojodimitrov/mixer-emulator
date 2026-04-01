@@ -391,7 +391,7 @@ def create_database(start: int = 0, end: int = 11_881_376) -> None:
     print(f"Populating records {start}..{end - 1}", flush=True)
 
     print_time(
-        "Completed in ",
+        "Database build",
         lambda: db.populate_range(
             start,
             end,

@@ -292,7 +292,7 @@ class HashIndex:
 
 def build_index(chunk_size: int = 200_000) -> None:
     builder = IndexBuilder(chunk_size=chunk_size)
-    print_time("Index build completed in ", lambda: builder.build())
+    print_time("Sorted index build", lambda: builder.build())
 
 
 def main() -> None:
