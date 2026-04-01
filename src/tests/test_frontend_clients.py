@@ -1,4 +1,5 @@
 import unittest
+import threading
 
 import importlib
 
@@ -51,6 +52,40 @@ class TestFrontendClientsRunners(unittest.TestCase):
             assert h.svc_server is not None
             resp = Repairer().run_once(record_id=5)
             self.assertIn(resp.get("action"), {"ok", "repaired"})
+
+    def test_corrupter_run_loop_stops_with_cancel_token(self):
+        stop_event = threading.Event()
+        call_count = {"n": 0}
+
+        corrupter = Corrupter()
+
+        def _fake_run_once(*, record_id=None, new_name=None):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                stop_event.set()
+            return {"status": "ok"}
+
+        corrupter.run_once = _fake_run_once  # type: ignore[method-assign]
+        corrupter.run_loop(cancel_token=stop_event)
+
+        self.assertEqual(call_count["n"], 2)
+
+    def test_repairer_run_loop_stops_with_cancel_token(self):
+        stop_event = threading.Event()
+        call_count = {"n": 0}
+
+        repairer = Repairer()
+
+        def _fake_run_once(*, record_id=None):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                stop_event.set()
+            return {"status": "ok"}
+
+        repairer.run_once = _fake_run_once  # type: ignore[method-assign]
+        repairer.run_loop(cancel_token=stop_event)
+
+        self.assertEqual(call_count["n"], 2)
 
 
 if __name__ == "__main__":

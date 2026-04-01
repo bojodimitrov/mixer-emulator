@@ -24,7 +24,7 @@ class DbServer:
     def __init__(
         self,
         lookup_strategy: LookupStrategy = DbEngine.STRATEGY_LINEAR,
-        accept_timeout_sec: float = 0.5,
+        accept_timeout_sec: float = 3.0,
         conn_timeout_sec: float = 30.0,
         max_connections: int = 128,
         worker_pool_size: int = 32,

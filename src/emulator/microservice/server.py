@@ -27,6 +27,8 @@ class MicroserviceServer:
         latency_ms: int = 50,
         pool_size: int = 200,
         connection_pool_size: int = 16,
+        accept_timeout_sec: float = 3.0,
+        conn_timeout_sec: float = 30.0,
     ):
         self.host = str(SERVICE_ENDPOINT.host)
         self.port = int(SERVICE_ENDPOINT.port)
@@ -39,6 +41,8 @@ class MicroserviceServer:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._connection_pool_size = max(1, int(connection_pool_size))
+        self.accept_timeout_sec = float(accept_timeout_sec)
+        self.conn_timeout_sec = float(conn_timeout_sec)
         self._executor: Optional[ThreadPoolExecutor] = None
 
     def start(self) -> None:
@@ -54,7 +58,7 @@ class MicroserviceServer:
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind((self.host, self.port))
         self._socket.listen(128)
-        self._socket.settimeout(0.5)
+        self._socket.settimeout(self.accept_timeout_sec)
 
         self._stop_event.clear()
         self._thread = threading.Thread(
@@ -91,6 +95,7 @@ class MicroserviceServer:
 
     def _handle_conn(self, conn: socket.socket) -> None:
         with conn:
+            conn.settimeout(self.conn_timeout_sec)
             reply: Dict[str, Any]
             try:
                 msg = recv_message(conn)

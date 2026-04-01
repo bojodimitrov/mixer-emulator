@@ -34,7 +34,7 @@ def run_demo(*, seed: int | None = None) -> None:
     calls_count = 10
     record_ids = [random.randrange(total_records) for _ in range(calls_count)]
 
-    db_server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS, conn_timeout_sec=30)
+    db_server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
     db_server.start()
 
     svc_server = MicroserviceServer(
@@ -49,8 +49,8 @@ def run_demo(*, seed: int | None = None) -> None:
         print(f"db:      127.0.0.1:{db_server.port}")
         print(f"target ids ({len(record_ids)}): {record_ids}")
 
-        corrupter = Corrupter(timeout_sec=30)
-        repairer = Repairer(timeout_sec=30)
+        corrupter = Corrupter()
+        repairer = Repairer()
 
         print("-- Repair without corrupt data phase --")
         for rid in record_ids:

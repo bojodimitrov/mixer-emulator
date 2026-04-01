@@ -126,13 +126,52 @@ Build the B+ tree index:
 python -m emulator.storage.b_tree_index
 ```
 
-Run the demo application:
+Run the system orchestrator (starts DB server, microservice server, and frontend workers):
 
 ```bash
 python -m emulator.main
 ```
 
-The demo:
+The orchestrator opens a small metrics window and runs until you close that window.
+
+Run headless (metrics in terminal):
+
+```bash
+python -m emulator.main --headless
+```
+
+Run headless for a fixed duration:
+
+```bash
+python -m emulator.main --headless --duration-sec 30
+```
+
+Tune worker counts and pacing:
+
+```bash
+python -m emulator.main --corrupters 4 --repairers 2 --client-pause-ms 10
+```
+
+Choose DB lookup strategy:
+
+```bash
+python -m emulator.main --lookup-strategy bplus
+python -m emulator.main --lookup-strategy sorted
+python -m emulator.main --lookup-strategy linear
+```
+
+Main orchestration flags:
+
+- `--corrupters <int>`: number of corrupter client workers (default: `2`)
+- `--repairers <int>`: number of repairer client workers (default: `2`)
+- `--client-pause-ms <float>`: pause between client operations (default: `20.0`)
+- `--lookup-strategy <linear|sorted|bplus>`: DB lookup backend (default: `bplus`)
+- `--headless`: print metrics in terminal instead of opening a window
+- `--duration-sec <float>`: optional stop-after duration for headless runs
+
+The old database demo still exists under `emulator.demonstrations`.
+
+Demo behavior summary:
 
 - Creates three `DbOrchestrator` instances, one per lookup strategy
 - Reads a random record directly from the database

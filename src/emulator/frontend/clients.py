@@ -1,8 +1,8 @@
 import random
 import string
-import time
 from typing import Any, Dict, Optional
 
+from emulator.frontend.loop_cancellation import LoopCancellation
 from emulator.microservice.client import MicroserviceClient
 from emulator.transport_layer.transport import hex_from_bytes
 from emulator.utils import compute_hash_for, id_to_name
@@ -19,12 +19,8 @@ class Corrupter:
 
     def __init__(
         self,
-        *,
-        timeout_sec: float = 5.0,
     ):
-        self.client = MicroserviceClient(
-            timeout_sec=float(timeout_sec),
-        )
+        self.client = MicroserviceClient()
 
     def run_once(
         self,
@@ -62,14 +58,17 @@ class Corrupter:
         new_name: Optional[str] = None,
         pause_ms: float = 0.0,
         seed: Optional[int] = None,
+        cancel_token: Any = None,
     ) -> None:
+        cancellation = LoopCancellation(cancel_token)
         if seed is not None:
             random.seed(int(seed))
         try:
-            while True:
+            while not cancellation.is_cancelled():
                 self.run_once(record_id=record_id, new_name=new_name)
                 if pause_ms:
-                    time.sleep(max(0.0, float(pause_ms) / 1000.0))
+                    if cancellation.pause_or_cancel(max(0.0, float(pause_ms) / 1000.0)):
+                        break
         except KeyboardInterrupt:
             return
 
@@ -77,14 +76,8 @@ class Corrupter:
 class Repairer:
     """Frontend client that sends GET requests and, on missing records, repairs via POST."""
 
-    def __init__(
-        self,
-        *,
-        timeout_sec: float = 5.0,
-    ):
-        self.client = MicroserviceClient(
-            timeout_sec=float(timeout_sec),
-        )
+    def __init__(self):
+        self.client = MicroserviceClient()
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:
         """Attempt to read the canonical record, and repair if missing.
@@ -123,14 +116,17 @@ class Repairer:
         record_id: Optional[int] = None,
         pause_ms: float = 0.0,
         seed: Optional[int] = None,
+        cancel_token: Any = None,
     ) -> None:
+        cancellation = LoopCancellation(cancel_token)
         if seed is not None:
             random.seed(int(seed))
 
         try:
-            while True:
+            while not cancellation.is_cancelled():
                 self.run_once(record_id=record_id)
                 if pause_ms:
-                    time.sleep(max(0.0, float(pause_ms) / 1000.0))
+                    if cancellation.pause_or_cancel(max(0.0, float(pause_ms) / 1000.0)):
+                        break
         except KeyboardInterrupt:
             return
