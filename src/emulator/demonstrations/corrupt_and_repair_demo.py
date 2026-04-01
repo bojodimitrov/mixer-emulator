@@ -1,18 +1,15 @@
 """Demo: Corrupter corrupts a record, then Repairer repairs it (socket-based).
 
 Run:
-  python -m emulator.demonstrations.socket_corrupt_and_repair_demo
+  python -m emulator.demonstrations.corrupt_and_repair_demo
 
 This starts:
-  - SocketDatabaseServer (ephemeral port)
-  - SocketMicroserviceServer (ephemeral port)
+  - DbServer
+  - MicroserviceServer
 
 Then it runs:
   1) Corrupter once for a chosen id
   2) Repairer once for the same id
-
-Both Corrupter and Repairer are socket-only (they own a SocketMicroserviceClient
-internally and do not accept in-process service injection).
 """
 
 from __future__ import annotations
@@ -41,12 +38,11 @@ def run_demo(*, seed: int | None = None) -> None:
 
     svc_server = MicroserviceServer(
         latency_ms=20,
-        pool_size=50,
     )
     svc_server.start()
 
     try:
-        print("== Socket corrupt + repair demo ==")
+        print("== Corrupt + repair demo ==")
         print(f"service: 127.0.0.1:{svc_server.port}")
         print(f"db:      127.0.0.1:{db_server.port}")
         print(f"target id: {record_id}")
@@ -64,9 +60,6 @@ def run_demo(*, seed: int | None = None) -> None:
         print(f"Record corrupted: id= {_id_read} name= {name} hash= {hash}")
         print()
 
-        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
-        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
-        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
         print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
         print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
 

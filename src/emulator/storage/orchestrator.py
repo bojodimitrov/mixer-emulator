@@ -49,11 +49,6 @@ class DbOrchestrator:
         timeout_sec: float = 30.0,
         pool_size: int = 50,
     ):
-        if lookup_strategy not in DbEngine.LOOKUP_STRATEGIES:
-            supported = ", ".join(sorted(DbEngine.LOOKUP_STRATEGIES))
-            raise ValueError(
-                f"unsupported lookup_strategy={lookup_strategy!r}; expected one of: {supported}"
-            )
         if pool_size <= 0:
             raise ValueError("pool_size must be positive")
 

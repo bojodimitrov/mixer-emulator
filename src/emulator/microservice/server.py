@@ -1,5 +1,6 @@
 import socket
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from ..servers_config import SERVICE_ENDPOINT
@@ -27,6 +28,7 @@ class MicroserviceServer:
         self,
         latency_ms: int = 50,
         pool_size: int = 200,
+        connection_pool_size: int = 16,
     ):
         self.host = str(SERVICE_ENDPOINT.host)
         self.port = int(SERVICE_ENDPOINT.port)
@@ -38,10 +40,17 @@ class MicroserviceServer:
         self._socket: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._connection_pool_size = max(1, int(connection_pool_size))
+        self._executor: Optional[ThreadPoolExecutor] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._connection_pool_size,
+            thread_name_prefix="socket-service",
+        )
 
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -64,10 +73,14 @@ class MicroserviceServer:
                 self._socket.close()
             except OSError:
                 pass
+        if self._executor:
+            self._executor.shutdown(wait=True)
+            self._executor = None
         self._service.stop()
 
     def _serve(self) -> None:
         assert self._socket is not None
+        assert self._executor is not None
         while not self._stop_event.is_set():
             try:
                 conn, _addr = self._socket.accept()
@@ -76,12 +89,7 @@ class MicroserviceServer:
             except OSError:
                 break
 
-            threading.Thread(
-                target=self._handle_conn,
-                args=(conn,),
-                name="socket-service-conn",
-                daemon=True,
-            ).start()
+            self._executor.submit(self._handle_conn, conn)
 
     def _handle_conn(self, conn: socket.socket) -> None:
         with conn:
@@ -104,7 +112,7 @@ class MicroserviceServer:
         # Reuse existing Microservice queue/Request contract.
         import queue
 
-        q: queue.Queue = queue.Queue()
+        q = queue.Queue()
         self._service.process(Request(method, data, path, q))
         result = q.get(timeout=10)
 

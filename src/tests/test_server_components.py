@@ -67,9 +67,9 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         resp2 = client.query(h)
         self.assertIsNone(resp2)
 
-    def test_keepalive_close_is_graceful(self):
+    def test_pooled_close_is_graceful(self):
         client = DbClient(
-            keepalive=True,
+            pool_size=1,
         )
         self.addCleanup(client.close)
 
@@ -79,7 +79,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         name_b = id_to_name(record_id)
         h = compute_hash_for(record_id, name_b).hex()
 
-        # Two requests on same TCP connection.
+        # Reuse one pooled connection and ensure close remains graceful.
         self.assertIsNotNone(client.query(h))
 
     def test_connection_pool_reuses_sockets(self):

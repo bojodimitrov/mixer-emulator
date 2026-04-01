@@ -60,7 +60,7 @@ class Api:
 
 class Microservice:
 
-    def __init__(self, latency_ms: int = 50, pool_size: int = 500):
+    def __init__(self, latency_ms: int = 50, pool_size: int = 100):
         if pool_size <= 0:
             raise ValueError("pool_size must be positive")
 
@@ -109,13 +109,14 @@ class Microservice:
         self.api.add_route(method, path, handler)
 
     def _simulate_latency(self) -> None:
-        jitter_sec = random.randint(-10, 10) / 1000.0
-        delay = self.latency + jitter_sec
-        time.sleep(max(0.0, delay))
+        if self.latency > 0:
+            jitter_sec = random.randint(-10, 10) / 1000.0
+            delay = self.latency + jitter_sec
+            time.sleep(max(0.0, delay))
 
     def _process_request(self, req: Request) -> None:
         try:
-            # self._simulate_latency()
+            self._simulate_latency()
 
             key = (req.method, self.api._normalize_path(req.path))
             handler = self.api._routes.get(key)

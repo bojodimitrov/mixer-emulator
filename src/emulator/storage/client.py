@@ -9,7 +9,6 @@ from ..transport_layer.transport import (
     TcpEndpoint,
     recv_message,
     send_message,
-    hex_from_bytes,
 )
 
 
@@ -19,24 +18,17 @@ class DbClient:
     def __init__(
         self,
         timeout_sec: float = 5.0,
-        keepalive: bool = False,
         pool_size: int = 0,
     ):
         self.endpoint = TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port))
         self.timeout_sec = float(timeout_sec)
-        self.keepalive = bool(keepalive)
 
         # Connection management modes:
-        # - default (pool_size==0 and keepalive==False): open a new TCP connection per request
-        # - keepalive: one shared TCP connection reused by all calls on this instance (NOT thread-safe)
+        # - default (pool_size==0): open a new TCP connection per request
         # - pool_size>0: a pool of reusable TCP connections (thread-safe)
         if pool_size < 0:
             raise ValueError("pool_size must be >= 0")
-        if self.keepalive and pool_size > 0:
-            raise ValueError("use either keepalive or pool_size, not both")
         self.pool_size = int(pool_size)
-
-        self._socket = None  # keepalive-only
 
         self._pool: Optional[queue.LifoQueue[socket.socket]] = None
         self._pool_lock = threading.Lock()
@@ -53,14 +45,6 @@ class DbClient:
                 self._pool.put_nowait(s)
 
     def close(self) -> None:
-        socket_ = self._socket
-        self._socket = None
-        if socket_ is not None:
-            with suppress(Exception):
-                send_message(socket_, {"op": "Close"})
-            with suppress(Exception):
-                socket_.close()
-
         pool = self._pool
         self._pool = None
         if pool is not None:
@@ -73,13 +57,6 @@ class DbClient:
                     send_message(s, {"op": "Close"})
                 with suppress(Exception):
                     s.close()
-
-    def _get_socket(self):
-        if not self.keepalive:
-            return None
-        if self._socket is None:
-            self._socket = self.endpoint.connect(timeout_sec=self.timeout_sec)
-        return self._socket
 
     def _pool_acquire(self) -> socket.socket:
         pool = self._pool
@@ -131,13 +108,9 @@ class DbClient:
                 if socket.fileno() != -1:
                     self._pool_release(socket)
 
-        socket = self._get_socket()
-        if socket is None:
-            with self.endpoint.connect(timeout_sec=self.timeout_sec) as tmp:
-                send_message(tmp, payload)
-                return recv_message(tmp)
-        send_message(socket, payload)
-        return recv_message(socket)
+        with self.endpoint.connect(timeout_sec=self.timeout_sec) as tmp:
+            send_message(tmp, payload)
+            return recv_message(tmp)
 
     def query(self, hash: str) -> Optional[Tuple[int, str]]:
         resp = self._request({"op": "Query", "hash": hash})

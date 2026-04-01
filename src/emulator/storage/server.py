@@ -33,7 +33,7 @@ class DbServer:
         self.endpoint = DB_ENDPOINT
         self.host = str(DB_ENDPOINT.host)
         self.port = int(DB_ENDPOINT.port)
-        self._db_server = DbOrchestrator(lookup_strategy=lookup_strategy)
+        self._db_orchestrator = DbOrchestrator(lookup_strategy=lookup_strategy)
 
         self.accept_timeout_sec = float(accept_timeout_sec)
         self.conn_timeout_sec = float(conn_timeout_sec)
@@ -85,7 +85,7 @@ class DbServer:
 
         if self._executor:
             self._executor.shutdown(wait=True)
-        self._db_server.close()
+        self._db_orchestrator.close()
 
     def _serve(self) -> None:
         assert self._socket is not None
@@ -135,12 +135,13 @@ class DbServer:
 
     def _dispatch(self, req: Dict[str, Any]) -> Dict[str, Any]:
         op = req.get("op")
+
         if op == "Query":
             hash_hex = req.get("hash")
             if not isinstance(hash_hex, str):
                 raise ValueError("Query requires 'hash' hex string")
 
-            result = self._db_server.handle_request(
+            result = self._db_orchestrator.handle_request(
                 DbRequest("Query", {"hash": hash_hex})
             )
             return {"status": "ok", "result": result}
@@ -150,7 +151,7 @@ class DbServer:
             new_name = req.get("new_name")
             if not isinstance(id_, int) or not isinstance(new_name, str):
                 raise ValueError("Command requires 'id' int and 'new_name' str")
-            result = self._db_server.handle_request(
+            result = self._db_orchestrator.handle_request(
                 DbRequest("Command", {"id": id_, "new_name": new_name})
             )
             return {"status": "ok", "result": result}
