@@ -29,9 +29,7 @@ from ..socket_config import DB_ENDPOINT
 from ..utils import compute_hash_for
 
 
-def run_socket_bplus_demo(
-  host: str = DB_ENDPOINT.host, port: int = DB_ENDPOINT.port
-) -> None:
+def run_socket_bplus_demo() -> None:
     # Pick a random record from the DB (read directly from the on-disk DB file).
     db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
     record_count = db.record_count()
@@ -49,7 +47,7 @@ def run_socket_bplus_demo(
     try:
   # Use pooling (thread-safe) instead of keepalive.
   # The client will eagerly create half of pool_size connections on init.
-        client = SocketDatabaseClient(host=host, port=port, pool_size=20)
+        client = SocketDatabaseClient(pool_size=20)
 
         print("== B+ tree socket demo ==")
         print(f"record_id= {record_id} name= {old_name} hash= {old_hash.hex()}")

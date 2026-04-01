@@ -21,7 +21,6 @@ import importlib
 import random
 
 from ..socket_microservice import SocketMicroserviceServer
-from ..socket_config import DbEndpoint, ServiceEndpoint
 from ..storage.database import FileDB
 from ..storage.socket_server import SocketDatabaseServer
 
@@ -34,7 +33,6 @@ def run_demo(*, seed: int | None = None) -> None:
     if seed is not None:
         random.seed(int(seed))
 
-    # Create a small temporary DB so the demo is self-contained and deterministic.
     db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
     record_id = random.randint(0, max(0, db.record_count() - 1))
 

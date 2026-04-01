@@ -7,8 +7,8 @@ from unittest.mock import patch
 import emulator.storage.database as database_module
 from emulator.storage.socket_client import SocketDatabaseClient
 from emulator.storage.socket_server import SocketDatabaseServer
-from emulator.socket_microservice import SocketMicroserviceClient, SocketMicroserviceServer
-from emulator.socket_config import DB_ENDPOINT, DbEndpoint, ServiceEndpoint
+from emulator.socket_microservice import SocketMicroserviceServer
+from emulator.socket_config import DB_ENDPOINT
 
 
 class TestSocketDatabaseServerClient(unittest.TestCase):
@@ -45,7 +45,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_query_and_command_roundtrip(self):
-        client = SocketDatabaseClient("127.0.0.1", self.db_port)
+        client = SocketDatabaseClient()
 
         # Use poor-man's blackbox: query for a known record by computing the same
         # hash the DB uses.
@@ -67,8 +67,6 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
     def test_keepalive_close_is_graceful(self):
         client = SocketDatabaseClient(
-            "127.0.0.1",
-            self.db_port,
             keepalive=True,
         )
         self.addCleanup(client.close)
@@ -84,8 +82,6 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
     def test_connection_pool_reuses_sockets(self):
         client = SocketDatabaseClient(
-            "127.0.0.1",
-            self.db_port,
             pool_size=2,
         )
         self.addCleanup(client.close)
@@ -104,8 +100,6 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
     def test_connection_pool_is_thread_safe(self):
         client = SocketDatabaseClient(
-            "127.0.0.1",
-            self.db_port,
             pool_size=4,
         )
         self.addCleanup(client.close)
@@ -139,8 +133,6 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
     def test_connection_pool_eagerly_creates_half_on_init(self):
         client = SocketDatabaseClient(
-            "127.0.0.1",
-            self.db_port,
             pool_size=6,
         )
         self.addCleanup(client.close)

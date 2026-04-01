@@ -27,7 +27,7 @@ class SocketMicroserviceServer:
     ):
         self.host = str(DEFAULT_SERVICE_ENDPOINT.host)
         self.port = int(DEFAULT_SERVICE_ENDPOINT.port)
-        self._db_client = SocketDatabaseClient(str(DB_ENDPOINT.host), int(DB_ENDPOINT.port))
+        self._db_client = SocketDatabaseClient()
         self._service = Microservice(
             db_client=self._db_client,
             latency_ms=latency_ms,

@@ -13,13 +13,11 @@ class SocketDatabaseClient:
 
     def __init__(
         self,
-        host: str = DB_ENDPOINT.host,
-        port: int = DB_ENDPOINT.port,
         timeout_sec: float = 5.0,
         keepalive: bool = False,
         pool_size: int = 0,
     ):
-        self.endpoint = TcpEndpoint(host, int(port))
+        self.endpoint = TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port))
         self.timeout_sec = float(timeout_sec)
         self.keepalive = bool(keepalive)
 
