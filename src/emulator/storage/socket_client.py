@@ -1,4 +1,6 @@
+import queue
 import socket
+import threading
 from contextlib import suppress
 from typing import Optional, Tuple
 
@@ -15,20 +17,59 @@ class SocketDatabaseClient:
         port: int = DEFAULT_DB_ENDPOINT.port,
         timeout_sec: float = 5.0,
         keepalive: bool = False,
+        pool_size: int = 0,
     ):
         self.endpoint = TcpEndpoint(host, int(port))
         self.timeout_sec = float(timeout_sec)
         self.keepalive = bool(keepalive)
-        self._socket = None
+
+        # Connection management modes:
+        # - default (pool_size==0 and keepalive==False): open a new TCP connection per request
+        # - keepalive: one shared TCP connection reused by all calls on this instance (NOT thread-safe)
+        # - pool_size>0: a pool of reusable TCP connections (thread-safe)
+        if pool_size < 0:
+            raise ValueError("pool_size must be >= 0")
+        if self.keepalive and pool_size > 0:
+            raise ValueError("use either keepalive or pool_size, not both")
+        self.pool_size = int(pool_size)
+
+        self._socket = None  # keepalive-only
+
+        self._pool: Optional[queue.LifoQueue[socket.socket]] = None
+        self._pool_lock = threading.Lock()
+        self._created = 0
+        if self.pool_size > 0:
+            self._pool = queue.LifoQueue(maxsize=self.pool_size)
+
+            # Eagerly create half the pool to reduce first-request connect overhead,
+            # without paying the cost of creating the full pool up-front.
+            eager = max(0, self.pool_size // 2)
+            for _ in range(eager):
+                s = self.endpoint.connect(timeout_sec=self.timeout_sec)
+                self._created += 1
+                self._pool.put_nowait(s)
 
     def close(self) -> None:
-        socket = self._socket
+        socket_ = self._socket
         self._socket = None
-        if socket is not None:
+        if socket_ is not None:
             with suppress(Exception):
-                send_message(socket, {"op": "Close"})
+                send_message(socket_, {"op": "Close"})
             with suppress(Exception):
-                socket.close()
+                socket_.close()
+
+        pool = self._pool
+        self._pool = None
+        if pool is not None:
+            while True:
+                try:
+                    s = pool.get_nowait()
+                except queue.Empty:
+                    break
+                with suppress(Exception):
+                    send_message(s, {"op": "Close"})
+                with suppress(Exception):
+                    s.close()
 
     def _get_socket(self):
         if not self.keepalive:
@@ -37,7 +78,56 @@ class SocketDatabaseClient:
             self._socket = self.endpoint.connect(timeout_sec=self.timeout_sec)
         return self._socket
 
+    def _pool_acquire(self) -> socket.socket:
+        pool = self._pool
+        if pool is None:
+            raise RuntimeError("pool not enabled")
+
+        try:
+            sock = pool.get_nowait()
+            return sock
+        except queue.Empty:
+            pass
+
+        with self._pool_lock:
+            if self._created < self.pool_size:
+                self._created += 1
+                return self.endpoint.connect(timeout_sec=self.timeout_sec)
+
+        # Pool is at capacity; wait for a socket to be returned.
+        return pool.get(timeout=self.timeout_sec)
+
+    def _pool_release(self, sock: socket.socket) -> None:
+        pool = self._pool
+        if pool is None:
+            with suppress(Exception):
+                sock.close()
+            return
+        try:
+            pool.put_nowait(sock)
+        except queue.Full:
+            with suppress(Exception):
+                sock.close()
+
     def _request(self, payload: dict):
+        # Pool mode (thread-safe reuse, keep-alive protocol per socket).
+        if self._pool is not None:
+            sock = self._pool_acquire()
+            try:
+                send_message(sock, payload)
+                return recv_message(sock)
+            except Exception:
+                # Drop broken sockets so the pool can recreate later.
+                with suppress(Exception):
+                    sock.close()
+                with self._pool_lock:
+                    self._created = max(0, self._created - 1)
+                raise
+            finally:
+                # If the socket is already closed, releasing is harmless.
+                if sock.fileno() != -1:
+                    self._pool_release(sock)
+
         sock = self._get_socket()
         if sock is None:
             with self.endpoint.connect(timeout_sec=self.timeout_sec) as tmp:

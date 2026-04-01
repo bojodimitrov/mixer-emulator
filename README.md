@@ -153,6 +153,73 @@ server.close()
 
 `emulator.service.Microservice` and `emulator.client.Client` provide a lightweight queue-based wrapper that can simulate service latency. This layer is useful for demonstrations, but the thread-pool `DatabaseServer` is the more complete concurrency primitive in the current codebase.
 
+## Socket-based Decoupling (DB ↔ Service ↔ Frontend)
+
+In addition to the in-process queue-based components, the repo includes a small JSON-over-TCP layer that lets you run the database, microservice, and frontend as separate processes.
+
+Key modules:
+
+- `emulator/transport.py`: length-prefixed JSON framing (`send_message` / `recv_message`)
+- `emulator/storage/socket_server.py`: `SocketDatabaseServer` (TCP wrapper around `DatabaseServer`)
+- `emulator/storage/socket_client.py`: `SocketDatabaseClient`
+- `emulator/socket_microservice.py`: `SocketMicroserviceServer` / `SocketMicroserviceClient`
+
+### Architecture diagram
+
+This shows the request flow inside `SocketDatabaseServer`, and specifically what `self._thread` does.
+
+```text
+Caller thread
+  |
+  |  start()
+  v
++---------------------------+
+| SocketDatabaseServer      |
+|  - _sock (listening TCP)  |
+|  - _stop_event            |
+|  - _executor (threadpool) |
+|  - _thread (accept loop)  |
++---------------------------+
+       |
+       | creates
+       v
+   +-------------------+
+   | _thread           |   (1 background thread)
+   | target = _serve() |
+   +-------------------+
+       |
+       | loop:
+       |   accept()  (with timeout)
+       v
+   +-------------------+
+   | new TCP conn      |  (conn socket)
+   +-------------------+
+       |
+       | submit to thread pool
+       v
++----------------------------------+
+| _executor: ThreadPoolExecutor    |  (N worker threads)
++----------------------------------+
+       |
+       | runs in a worker:
+       v
+   +--------------------------+
+   | _handle_conn(conn)       |
+   |  - sets TCP_NODELAY      |
+   |  - sets conn timeout     |
+   |  - keep-alive loop:      |
+   |      recv_message()      |
+   |      if op=="Close":     |
+   |         send ok; return  |
+   |      resp=_dispatch(req) |
+   |      send_message(resp)  |
+   +--------------------------+
+       |
+       v
+     client disconnects
+     or timeout / Close
+```
+
 ## Running Tests
 
 Run tests:

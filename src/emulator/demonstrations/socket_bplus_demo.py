@@ -47,7 +47,9 @@ def run_socket_bplus_demo(
     server = SocketDatabaseServer(host=host, port=port, lookup_strategy=FileDB.STRATEGY_BPLUS)
     server.start()
     try:
-        client = SocketDatabaseClient(host=host, port=port, keepalive=True)
+  # Use pooling (thread-safe) instead of keepalive.
+  # The client will eagerly create half of pool_size connections on init.
+        client = SocketDatabaseClient(host=host, port=port, pool_size=20)
 
         print("== B+ tree socket demo ==")
         print(f"record_id= {record_id} name= {old_name} hash= {old_hash.hex()}")
