@@ -59,23 +59,23 @@ class TestSocketDecoupling(unittest.TestCase):
         name_b = id_to_name(record_id)
         h = compute_hash_for(record_id, name_b)
 
-        resp = client.request("GET", {"hash": hex_from_bytes(h)}, "/")
+        resp = client.request("GET", {"hash": hex_from_bytes(h)}, "/hash")
         self.assertEqual(resp["status"], "ok")
         self.assertEqual(resp["result"], [record_id, name_b.decode("ascii")])
 
-        resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"}, "/")
+        resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"}, "/name")
         self.assertEqual(resp2["status"], "ok")
         self.assertTrue(resp2["result"])
 
         # old hash should no longer match
-        resp3 = client.request("GET", {"hash": hex_from_bytes(h)}, "/")
+        resp3 = client.request("GET", {"hash": hex_from_bytes(h)}, "/hash")
         self.assertEqual(resp3["status"], "ok")
         self.assertIsNone(resp3["result"])
 
     def test_unsupported_method_returns_error(self):
         client = MicroserviceClient()
 
-        resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"}, "/")
+        resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"}, "/name")
         self.assertEqual(resp.get("status"), "error")
         self.assertIn("unsupported method", str(resp.get("error", "")).lower())
 

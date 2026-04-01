@@ -45,7 +45,7 @@ class Corrupter:
             new_name = _random_name()
 
         resp = self.client.request(
-            "POST", {"id": int(record_id), "new_name": str(new_name)}, "/"
+            "POST", {"id": int(record_id), "new_name": str(new_name)}, "/name"
         )
 
         # Include chosen inputs so orchestrators/demos can chain actions.
@@ -101,7 +101,7 @@ class Repairer:
         correct_hash = compute_hash_for(record_id, correct_name)
 
         get_response = self.client.request(
-            "GET", {"hash": hex_from_bytes(correct_hash)}, "/"
+            "GET", {"hash": hex_from_bytes(correct_hash)}, "/hash"
         )
         if (
             get_response.get("status") == "ok"
@@ -112,7 +112,7 @@ class Repairer:
         repair_response = self.client.request(
             "POST",
             {"id": int(record_id), "new_name": correct_name.decode("ascii")},
-            "/",
+            "/name",
         )
 
         return {"action": "repaired", "id": record_id, "response": repair_response}

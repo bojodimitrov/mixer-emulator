@@ -253,7 +253,7 @@ Current test coverage includes:
 
 The suite currently includes server, client, transport, and storage tests.
 
-## Benchmark Snapshot (Corrupt Then Repair Demo)
+## Benchmark Snapshot
 
 Latest run shape: `Repair (clean) -> Corrupt -> Repair (corrupted)`, 10 IDs per phase.
 

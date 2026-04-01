@@ -154,8 +154,8 @@ class CustomApi(Api):
         self.db_client = DbClient()
 
     def register_routes(self) -> None:
-        self.get("/")(self.get_by_hash)
-        self.post("/")(self.post_by_id)
+        self.get("/hash")(self.get_by_hash)
+        self.post("/name")(self.post_by_id)
 
     def get_by_hash(self, payload: Dict[str, Any]):
         return self.db_client.query(payload["hash"])
