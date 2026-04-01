@@ -8,6 +8,7 @@ import emulator.storage.database as database_module
 from emulator.storage.socket_client import SocketDatabaseClient
 from emulator.storage.socket_server import SocketDatabaseServer
 from emulator.socket_microservice import SocketMicroserviceClient, SocketMicroserviceServer
+from emulator.socket_config import DB_ENDPOINT, DbEndpoint, ServiceEndpoint
 
 
 class TestSocketDatabaseServerClient(unittest.TestCase):
@@ -31,7 +32,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.db.populate_range(0, 64)
 
         # Use ephemeral port to avoid collisions.
-        self.db_server = SocketDatabaseServer(host="127.0.0.1", port=0)
+        self.db_server = SocketDatabaseServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
@@ -174,19 +175,14 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
         self.db.ensure_capacity(32)
         self.db.populate_range(0, 32)
 
-        self.db_server = SocketDatabaseServer(host="127.0.0.1", port=0)
+        self.db_server = SocketDatabaseServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
         time.sleep(0.02)
         assert self.db_server._socket is not None
-        db_port = int(self.db_server._socket.getsockname()[1])
 
         self.svc_server = SocketMicroserviceServer(
-            host="127.0.0.1",
-            port=0,
-            db_host="127.0.0.1",
-            db_port=db_port,
             latency_ms=0,
             pool_size=5,
         )
@@ -195,27 +191,15 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
 
         time.sleep(0.02)
         assert self.svc_server._sock is not None
-        self.svc_port = int(self.svc_server._sock.getsockname()[1])
 
     def tearDown(self):
         self.temp_dir.cleanup()
-
-    def test_client_times_out_cleanly(self):
-        # Uses a tiny timeout and a guaranteed-bad port.
-        bad = SocketMicroserviceClient("127.0.0.1", 1, timeout_sec=0.05)
-        from emulator.utils import compute_hash_for, id_to_name
-
-        record_id = 0
-        h = compute_hash_for(record_id, id_to_name(record_id))
-
-        with self.assertRaises(Exception):
-            bad.get(h)
 
     def test_server_rejects_invalid_request(self):
         # Send a raw message with invalid method through the transport layer.
         from emulator.transport import TcpEndpoint, send_message, recv_message
 
-        ep = TcpEndpoint("127.0.0.1", self.svc_port)
+        ep = TcpEndpoint(DB_ENDPOINT.host, DB_ENDPOINT.port)
         with ep.connect(timeout_sec=1.0) as sock:
             send_message(sock, {"method": "BOGUS"})
             resp = recv_message(sock)

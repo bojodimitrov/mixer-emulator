@@ -4,7 +4,7 @@ import threading
 from contextlib import suppress
 from typing import Optional, Tuple
 
-from ..socket_config import DEFAULT_DB_ENDPOINT
+from ..socket_config import DB_ENDPOINT
 from ..transport import TcpEndpoint, recv_message, send_message, hex_from_bytes
 
 
@@ -13,8 +13,8 @@ class SocketDatabaseClient:
 
     def __init__(
         self,
-        host: str = DEFAULT_DB_ENDPOINT.host,
-        port: int = DEFAULT_DB_ENDPOINT.port,
+        host: str = DB_ENDPOINT.host,
+        port: int = DB_ENDPOINT.port,
         timeout_sec: float = 5.0,
         keepalive: bool = False,
         pool_size: int = 0,

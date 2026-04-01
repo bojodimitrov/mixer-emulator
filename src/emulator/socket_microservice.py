@@ -2,7 +2,7 @@ import socket
 import threading
 from typing import Any, Dict, Optional
 
-from .socket_config import DEFAULT_DB_ENDPOINT, DEFAULT_SERVICE_ENDPOINT
+from .socket_config import DB_ENDPOINT, DEFAULT_SERVICE_ENDPOINT
 from .service import Microservice, Request
 from .transport import recv_message, send_message, bytes_from_hex, hex_from_bytes
 from .storage.socket_client import SocketDatabaseClient
@@ -22,16 +22,12 @@ class SocketMicroserviceServer:
 
     def __init__(
         self,
-    host: str = DEFAULT_SERVICE_ENDPOINT.host,
-    port: int = DEFAULT_SERVICE_ENDPOINT.port,
-    db_host: str = DEFAULT_DB_ENDPOINT.host,
-    db_port: int = DEFAULT_DB_ENDPOINT.port,
         latency_ms: int = 50,
         pool_size: int = 200,
     ):
-        self.host = host
-        self.port = int(port)
-        self._db_client = SocketDatabaseClient(db_host, db_port)
+        self.host = str(DEFAULT_SERVICE_ENDPOINT.host)
+        self.port = int(DEFAULT_SERVICE_ENDPOINT.port)
+        self._db_client = SocketDatabaseClient(str(DB_ENDPOINT.host), int(DB_ENDPOINT.port))
         self._service = Microservice(
             db_client=self._db_client,
             latency_ms=latency_ms,
@@ -49,6 +45,8 @@ class SocketMicroserviceServer:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
+        # If port=0 was used, OS picks an ephemeral port; publish it.
+        self.port = int(self._sock.getsockname()[1])
         self._sock.listen(128)
         self._sock.settimeout(0.5)
 
@@ -116,7 +114,7 @@ class SocketMicroserviceServer:
         import queue
 
         q: queue.Queue = queue.Queue()
-        self._service.send(Request(method, payload, q))
+        self._service.process(Request(method, payload, q))
         result = q.get(timeout=10)
 
         # Normalize bytes in response (if any) to hex to keep JSON clean.
@@ -132,19 +130,17 @@ class SocketMicroserviceClient:
 
     def __init__(
         self,
-        host: str = DEFAULT_SERVICE_ENDPOINT.host,
-        port: int = DEFAULT_SERVICE_ENDPOINT.port,
         timeout_sec: float = 5.0,
     ):
         from .transport import TcpEndpoint
 
-        self.endpoint = TcpEndpoint(host, int(port))
+        self.endpoint = TcpEndpoint(DEFAULT_SERVICE_ENDPOINT.host, int(DEFAULT_SERVICE_ENDPOINT.port))
         self.timeout_sec = float(timeout_sec)
 
     def get(self, hash_bytes: bytes) -> Dict[str, Any]:
-        with self.endpoint.connect(timeout_sec=self.timeout_sec) as sock:
-            send_message(sock, {"method": "GET", "hash": hex_from_bytes(hash_bytes)})
-            return recv_message(sock)
+        with self.endpoint.connect(timeout_sec=self.timeout_sec) as socket:
+            send_message(socket, {"method": "GET", "hash": hex_from_bytes(hash_bytes)})
+            return recv_message(socket)
 
     def post(self, id_: int, new_name: str) -> Dict[str, Any]:
         with self.endpoint.connect(timeout_sec=self.timeout_sec) as sock:

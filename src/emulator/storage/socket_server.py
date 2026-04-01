@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from ..transport import recv_message, send_message, bytes_from_hex
-from ..socket_config import DEFAULT_DB_ENDPOINT
+from ..socket_config import DB_ENDPOINT
 from .database import FileDB
 from .server import DatabaseRequest, DatabaseServer, LookupStrategy
 
@@ -23,8 +23,6 @@ class SocketDatabaseServer:
 
     def __init__(
         self,
-        host: str = DEFAULT_DB_ENDPOINT.host,
-        port: int = DEFAULT_DB_ENDPOINT.port,
         lookup_strategy: LookupStrategy = FileDB.STRATEGY_LINEAR,
         accept_timeout_sec: float = 0.5,
         conn_timeout_sec: float = 30.0,
@@ -32,8 +30,9 @@ class SocketDatabaseServer:
         worker_pool_size: int = 32,
         tcp_nodelay: bool = True,
     ):
-        self.host = host
-        self.port = int(port)
+        self.endpoint = DB_ENDPOINT
+        self.host = str(DB_ENDPOINT.host)
+        self.port = int(DB_ENDPOINT.port)
         self._db_server = DatabaseServer(lookup_strategy=lookup_strategy)
 
         self.accept_timeout_sec = float(accept_timeout_sec)
@@ -63,6 +62,8 @@ class SocketDatabaseServer:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind((self.host, self.port))
+        # If port=0 was used, OS picks an ephemeral port; publish it.
+        self.port = int(self._socket.getsockname()[1])
         self._socket.listen(self.max_connections)
         self._socket.settimeout(self.accept_timeout_sec)
 

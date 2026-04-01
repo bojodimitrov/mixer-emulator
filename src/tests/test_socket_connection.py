@@ -7,6 +7,7 @@ from unittest.mock import patch
 import emulator.storage.database as database_module
 from emulator.storage.socket_server import SocketDatabaseServer
 from emulator.socket_microservice import SocketMicroserviceClient, SocketMicroserviceServer
+from emulator.socket_config import DbEndpoint, ServiceEndpoint
 from emulator.utils import compute_hash_for, id_to_name
 
 
@@ -30,15 +31,11 @@ class TestSocketDecoupling(unittest.TestCase):
         self.db.ensure_capacity(64)
         self.db.populate_range(0, 64)
 
-        self.db_server = SocketDatabaseServer(host="127.0.0.1", port=5601)
+        self.db_server = SocketDatabaseServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
         self.svc_server = SocketMicroserviceServer(
-            host="127.0.0.1",
-            port=5602,
-            db_host="127.0.0.1",
-            db_port=5601,
             latency_ms=0,
             pool_size=10,
         )
@@ -52,7 +49,7 @@ class TestSocketDecoupling(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_query_and_update_over_sockets(self):
-        client = SocketMicroserviceClient(host="127.0.0.1", port=5602)
+        client = SocketMicroserviceClient()
 
         record_id = 7
         name_b = id_to_name(record_id)

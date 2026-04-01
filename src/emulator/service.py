@@ -71,7 +71,7 @@ class Microservice:
         except Exception as exc:
             req.reply_q.put({"status": "error", "error": str(exc)})
 
-    def send(self, req: Request):
+    def process(self, req: Request):
         if self._is_shutdown:
             req.reply_q.put({"status": "error", "error": "service is shut down"})
             return
@@ -81,16 +81,3 @@ class Microservice:
     def stop(self):
         self._is_shutdown = True
         self._executor.shutdown(wait=True)
-
-
-class DatabaseClient:
-    def __init__(self, server):
-        self.server = server
-
-    def query(self, hash_bytes: bytes):
-        req = DatabaseRequest("Query", {"hash_bytes": hash_bytes})
-        return self.server.handle_request(req)
-
-    def command(self, id_: int, new_name_str: str) -> bool:
-        req = DatabaseRequest("Command", {"id": id_, "new_name": new_name_str})
-        return self.server.handle_request(req)

@@ -15,14 +15,14 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class DbEndpoint:
     host: str = "127.0.0.1"
-    port: int = 5001
+    port: int = 50001
 
 
 @dataclass(frozen=True)
 class ServiceEndpoint:
     host: str = "127.0.0.1"
-    port: int = 5002
+    port: int = 50002
 
 
-DEFAULT_DB_ENDPOINT = DbEndpoint()
+DB_ENDPOINT = DbEndpoint()
 DEFAULT_SERVICE_ENDPOINT = ServiceEndpoint()
