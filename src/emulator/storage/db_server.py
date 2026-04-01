@@ -4,13 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from ..transport import recv_message, send_message, bytes_from_hex
-from ..socket_config import DB_ENDPOINT
-from .database import FileDB
-from .server import DatabaseRequest, DatabaseServer, LookupStrategy
+from ..servers_config import DB_ENDPOINT
+from .engine import DbEngine
+from .server import DbRequest, DbOrchestrator, LookupStrategy
 
 
-class SocketDatabaseServer:
-    """TCP wrapper around `DatabaseServer`.
+class DbServer:
+    """TCP wrapper around `DbOrchestrator`.
 
     Protocol (request):
       {"op": "Query", "hash": "<hex>"}
@@ -23,7 +23,7 @@ class SocketDatabaseServer:
 
     def __init__(
         self,
-        lookup_strategy: LookupStrategy = FileDB.STRATEGY_LINEAR,
+        lookup_strategy: LookupStrategy = DbEngine.STRATEGY_LINEAR,
         accept_timeout_sec: float = 0.5,
         conn_timeout_sec: float = 30.0,
         max_connections: int = 128,
@@ -33,7 +33,7 @@ class SocketDatabaseServer:
         self.endpoint = DB_ENDPOINT
         self.host = str(DB_ENDPOINT.host)
         self.port = int(DB_ENDPOINT.port)
-        self._db_server = DatabaseServer(lookup_strategy=lookup_strategy)
+        self._db_server = DbOrchestrator(lookup_strategy=lookup_strategy)
 
         self.accept_timeout_sec = float(accept_timeout_sec)
         self.conn_timeout_sec = float(conn_timeout_sec)
@@ -68,7 +68,9 @@ class SocketDatabaseServer:
         self._socket.settimeout(self.accept_timeout_sec)
 
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._serve, name="socket-db", daemon=True)
+        self._thread = threading.Thread(
+            target=self._serve, name="socket-db", daemon=True
+        )
         self._thread.start()
 
     def close(self) -> None:
@@ -136,7 +138,7 @@ class SocketDatabaseServer:
             if not isinstance(hash_hex, str):
                 raise ValueError("Query requires 'hash' hex string")
             result = self._db_server.handle_request(
-                DatabaseRequest("Query", {"hash_bytes": bytes_from_hex(hash_hex)})
+                DbRequest("Query", {"hash_bytes": bytes_from_hex(hash_hex)})
             )
             return {"status": "ok", "result": result}
 
@@ -146,7 +148,7 @@ class SocketDatabaseServer:
             if not isinstance(id_, int) or not isinstance(new_name, str):
                 raise ValueError("Command requires 'id' int and 'new_name' str")
             result = self._db_server.handle_request(
-                DatabaseRequest("Command", {"id": id_, "new_name": new_name})
+                DbRequest("Command", {"id": id_, "new_name": new_name})
             )
             return {"status": "ok", "result": result}
 

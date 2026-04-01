@@ -18,7 +18,7 @@ from .constants import (
 )
 
 
-class FileDB:
+class DbEngine:
     STRATEGY_LINEAR = "linear"
     STRATEGY_SORTED = "sorted"
     STRATEGY_BPLUS = "bplus"
@@ -374,7 +374,7 @@ def create_database(start: int = 0, end: int = 11_881_376) -> None:
     if end < start:
         raise ValueError("end must be greater than or equal to start")
 
-    db = FileDB()
+    db = DbEngine()
 
     def _print_progress(i: int, tot: int) -> None:
         bar_width = 30

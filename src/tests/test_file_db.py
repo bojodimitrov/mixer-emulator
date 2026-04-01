@@ -4,7 +4,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-import emulator.storage.database as database_module
+import emulator.storage.engine as database_module
 from emulator.utils import compute_hash_for
 
 
@@ -25,7 +25,7 @@ class TestFileDB(unittest.TestCase):
 
         self.addCleanup(self.temp_dir.cleanup)
 
-        self.db = database_module.FileDB()
+        self.db = database_module.DbEngine()
         self.db.ensure_capacity(32)
         self.db.populate_range(0, 32)
 
@@ -36,9 +36,7 @@ class TestFileDB(unittest.TestCase):
 
         self.assertEqual(id_read, record_id)
         self.assertEqual(name, "aaaah")
-        self.assertEqual(
-            hash_bytes, compute_hash_for(record_id, name.encode("ascii"))
-        )
+        self.assertEqual(hash_bytes, compute_hash_for(record_id, name.encode("ascii")))
 
     def test_query_by_hash_returns_matching_record(self):
         record_id = 19
@@ -57,7 +55,7 @@ class TestFileDB(unittest.TestCase):
         start_event = threading.Event()
 
         def worker(record_id: int):
-            local_db = database_module.FileDB()
+            local_db = database_module.DbEngine()
             try:
                 start_event.wait(timeout=2)
                 id_read, name, hash_bytes = local_db.read_record(record_id)

@@ -4,7 +4,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
 
-from .storage.server import DatabaseRequest
+from .storage.server import DbRequest
 
 
 class Request:

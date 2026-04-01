@@ -1,12 +1,10 @@
 import unittest
 
 import importlib
-from typing import Optional
 
-from emulator.socket_microservice import SocketMicroserviceServer
-from emulator.socket_config import DbEndpoint, ServiceEndpoint
-from emulator.storage.database import FileDB
-from emulator.storage.socket_server import SocketDatabaseServer
+from emulator.microservice_server import MicroserviceServer
+from emulator.storage.engine import DbEngine
+from emulator.storage.db_server import DbServer
 from tests.test_db_utils import create_seeded_temp_db
 
 frontend_clients = importlib.import_module("emulator.frontend-clients")
@@ -17,8 +15,8 @@ Repairer = frontend_clients.Repairer
 class _SocketHarness:
     def __init__(self):
         self.db_paths = None
-        self.db_server = SocketDatabaseServer(
-            lookup_strategy=FileDB.STRATEGY_BPLUS,
+        self.db_server = DbServer(
+            lookup_strategy=DbEngine.STRATEGY_BPLUS,
         )
         self.svc_server = None
 
@@ -27,7 +25,7 @@ class _SocketHarness:
         self.db_paths = create_seeded_temp_db(capacity=256, populate_end=256)
 
         self.db_server.start()
-        self.svc_server = SocketMicroserviceServer(
+        self.svc_server = MicroserviceServer(
             latency_ms=0,
             pool_size=10,
         )
@@ -46,9 +44,7 @@ class TestFrontendClientsRunners(unittest.TestCase):
     def test_corrupter_run_once_is_post(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None
-            resp = Corrupter().run_once(
-                record_id=5, new_name="abcde"
-            )
+            resp = Corrupter().run_once(record_id=5, new_name="abcde")
             self.assertEqual(resp.get("status"), "ok", msg=str(resp))
             self.assertEqual(resp.get("id"), 5)
             self.assertEqual(resp.get("new_name"), "abcde")

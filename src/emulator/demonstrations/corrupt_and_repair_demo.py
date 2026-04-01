@@ -20,9 +20,9 @@ from __future__ import annotations
 import importlib
 import random
 
-from ..socket_microservice import SocketMicroserviceServer
-from ..storage.database import FileDB
-from ..storage.socket_server import SocketDatabaseServer
+from ..microservice_server import MicroserviceServer
+from ..storage.engine import DbEngine
+from ..storage.db_server import DbServer
 
 frontend_clients = importlib.import_module("emulator.frontend-clients")
 Corrupter = frontend_clients.Corrupter
@@ -33,20 +33,19 @@ def run_demo(*, seed: int | None = None) -> None:
     if seed is not None:
         random.seed(int(seed))
 
-    db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
+    db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
     record_id = random.randint(0, max(0, db.record_count() - 1))
 
-    db_server = SocketDatabaseServer(
-        lookup_strategy=FileDB.STRATEGY_BPLUS,
+    db_server = DbServer(
+        lookup_strategy=DbEngine.STRATEGY_BPLUS,
     )
     db_server.start()
 
-    svc_server = SocketMicroserviceServer(
+    svc_server = MicroserviceServer(
         latency_ms=0,
         pool_size=50,
     )
     svc_server.start()
-
 
     try:
         print("== Socket corrupt + repair demo ==")

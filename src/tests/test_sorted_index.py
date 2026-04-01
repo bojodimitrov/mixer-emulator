@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import emulator.storage.database as database_module
+import emulator.storage.engine as database_module
 import emulator.storage.sorted_index as sorted_index_module
 
 
@@ -27,8 +27,8 @@ class TestSortedIndex(unittest.TestCase):
 
         self.addCleanup(self.temp_dir.cleanup)
 
-        self.db = database_module.FileDB(
-            lookup_strategy=database_module.FileDB.STRATEGY_SORTED
+        self.db = database_module.DbEngine(
+            lookup_strategy=database_module.DbEngine.STRATEGY_SORTED
         )
         self.db.ensure_capacity(128)
         self.db.populate_range(0, 128)

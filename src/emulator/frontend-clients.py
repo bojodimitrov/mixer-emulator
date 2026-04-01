@@ -1,13 +1,14 @@
 import random
 import string
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from .socket_microservice import SocketMicroserviceClient
+from .microservice_server import MicroserviceClient
 from .transport import hex_from_bytes
 from .utils import compute_hash_for, id_to_name
 
 _MAX_DB_ID = 11_881_375  # 26^5 - 1, last valid record id
+
 
 def _random_name() -> str:
     return "".join(random.choice(string.ascii_lowercase) for _ in range(5))
@@ -21,7 +22,7 @@ class Corrupter:
         *,
         timeout_sec: float = 5.0,
     ):
-        self.client = SocketMicroserviceClient(
+        self.client = MicroserviceClient(
             timeout_sec=float(timeout_sec),
         )
 
@@ -82,7 +83,7 @@ class Repairer:
         *,
         timeout_sec: float = 5.0,
     ):
-        self.client = SocketMicroserviceClient(
+        self.client = MicroserviceClient(
             timeout_sec=float(timeout_sec),
         )
 
@@ -100,12 +101,19 @@ class Repairer:
         correct_name = id_to_name(record_id)
         correct_hash = compute_hash_for(record_id, correct_name)
 
-        get_response = self.client.request("GET", {"hash": hex_from_bytes(correct_hash)})
-        if get_response.get("status") == "ok" and get_response.get("result") is not None:
+        get_response = self.client.request(
+            "GET", {"hash": hex_from_bytes(correct_hash)}
+        )
+        if (
+            get_response.get("status") == "ok"
+            and get_response.get("result") is not None
+        ):
             return {"action": "ok", "id": record_id, "response": get_response}
 
-        repair_response = self.client.request("POST", {"id": int(record_id), "new_name": correct_name.decode("ascii")})
-        
+        repair_response = self.client.request(
+            "POST", {"id": int(record_id), "new_name": correct_name.decode("ascii")}
+        )
+
         return {"action": "repaired", "id": record_id, "response": repair_response}
 
     def run_loop(

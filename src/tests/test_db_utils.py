@@ -36,7 +36,7 @@ def create_seeded_temp_db(
     Returns paths + the TemporaryDirectory handle (caller must cleanup).
     """
 
-    from emulator.storage import database as database_module
+    from emulator.storage import engine as database_module
 
     td = tempfile.TemporaryDirectory()
     db_path = os.path.join(td.name, "temp.db")
@@ -48,7 +48,7 @@ def create_seeded_temp_db(
     database_module.DEFAULT_INDEX_PATH = idx_path
     database_module.DEFAULT_BPLUS_INDEX_PATH = bpt_path
 
-    db = database_module.FileDB(lookup_strategy=lookup_strategy)  # type: ignore[arg-type]
+    db = database_module.DbEngine(lookup_strategy=lookup_strategy)  # type: ignore[arg-type]
     db.ensure_capacity(int(capacity))
     db.populate_range(0, int(populate_end))
 
@@ -62,4 +62,6 @@ def create_seeded_temp_db(
         # Index is an optimization; callers that don't need it can ignore.
         pass
 
-    return SeededDbPaths(temp_dir=td, db_path=db_path, idx_path=idx_path, bpt_path=bpt_path)
+    return SeededDbPaths(
+        temp_dir=td, db_path=db_path, idx_path=idx_path, bpt_path=bpt_path
+    )

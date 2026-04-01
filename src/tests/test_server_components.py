@@ -4,11 +4,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-import emulator.storage.database as database_module
-from emulator.storage.socket_client import SocketDatabaseClient
-from emulator.storage.socket_server import SocketDatabaseServer
-from emulator.socket_microservice import SocketMicroserviceServer
-from emulator.socket_config import DB_ENDPOINT
+import emulator.storage.engine as database_module
+from emulator.storage.db_client import SocketDatabaseClient
+from emulator.storage.db_server import DbServer
+from emulator.microservice_server import MicroserviceServer
+from emulator.servers_config import DB_ENDPOINT
 
 
 class TestSocketDatabaseServerClient(unittest.TestCase):
@@ -27,12 +27,12 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-        self.db = database_module.FileDB()
+        self.db = database_module.DbEngine()
         self.db.ensure_capacity(64)
         self.db.populate_range(0, 64)
 
         # Use ephemeral port to avoid collisions.
-        self.db_server = SocketDatabaseServer()
+        self.db_server = DbServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
@@ -141,7 +141,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.assertIsNotNone(client._pool)
         # pool_size=6 => eager=3
         self.assertGreaterEqual(client._created, 3)
-            # Help static type checkers: _pool is asserted non-None above.
+        # Help static type checkers: _pool is asserted non-None above.
         pool = client._pool
         assert pool is not None
         self.assertGreaterEqual(pool.qsize(), 3)
@@ -163,18 +163,18 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-        self.db = database_module.FileDB()
+        self.db = database_module.DbEngine()
         self.db.ensure_capacity(32)
         self.db.populate_range(0, 32)
 
-        self.db_server = SocketDatabaseServer()
+        self.db_server = DbServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
         time.sleep(0.02)
         assert self.db_server._socket is not None
 
-        self.svc_server = SocketMicroserviceServer(
+        self.svc_server = MicroserviceServer(
             latency_ms=0,
             pool_size=5,
         )
@@ -182,7 +182,7 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
         self.addCleanup(self.svc_server.close)
 
         time.sleep(0.02)
-        assert self.svc_server._sock is not None
+        assert self.svc_server._socket is not None
 
     def tearDown(self):
         self.temp_dir.cleanup()

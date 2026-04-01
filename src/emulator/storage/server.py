@@ -2,21 +2,21 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from dataclasses import dataclass
 from typing import Any, Dict, Literal
 
-from .database import FileDB
+from .engine import DbEngine
 
 LookupStrategy = Literal["linear", "sorted", "bplus"]
 OperationType = Literal["Query", "Command"]
 
 
 @dataclass
-class DatabaseRequest:
+class DbRequest:
     operation: OperationType
     payload: Dict[str, Any]
 
 
 def _database_worker(
-    db: FileDB,
-    request: DatabaseRequest,
+    db: DbEngine,
+    request: DbRequest,
 ) -> Any:
     if request.operation == "Query":
         if db.record_count() == 0:
@@ -35,22 +35,22 @@ def _database_worker(
     raise ValueError(f"unknown operation: {request.operation}")
 
 
-class DatabaseServer:
+class DbOrchestrator:
     """
-    Thread-pool database server.
+    Thread-pool database orchestrator.
 
     Incoming requests are executed by a fixed worker pool against a shared
-    FileDB instance to avoid per-request process and DB initialization overhead.
+    DbEngine instance to avoid per-request process and DB initialization overhead.
     """
 
     def __init__(
         self,
-        lookup_strategy: LookupStrategy = FileDB.STRATEGY_LINEAR,
+        lookup_strategy: LookupStrategy = DbEngine.STRATEGY_LINEAR,
         timeout_sec: float = 30.0,
         pool_size: int = 50,
     ):
-        if lookup_strategy not in FileDB.LOOKUP_STRATEGIES:
-            supported = ", ".join(sorted(FileDB.LOOKUP_STRATEGIES))
+        if lookup_strategy not in DbEngine.LOOKUP_STRATEGIES:
+            supported = ", ".join(sorted(DbEngine.LOOKUP_STRATEGIES))
             raise ValueError(
                 f"unsupported lookup_strategy={lookup_strategy!r}; expected one of: {supported}"
             )
@@ -59,13 +59,13 @@ class DatabaseServer:
 
         self.lookup_strategy = lookup_strategy
         self.timeout_sec = float(timeout_sec)
-        self._db = FileDB(lookup_strategy=lookup_strategy)
+        self._db = DbEngine(lookup_strategy=lookup_strategy)
         self._executor = ThreadPoolExecutor(
             max_workers=int(pool_size),
             thread_name_prefix="db-server",
         )
 
-    def handle_request(self, request: DatabaseRequest) -> Any:
+    def handle_request(self, request: DbRequest) -> Any:
         try:
             future = self._executor.submit(_database_worker, self._db, request)
             return future.result(timeout=self.timeout_sec)

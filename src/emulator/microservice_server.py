@@ -2,13 +2,13 @@ import socket
 import threading
 from typing import Any, Dict, Optional
 
-from .socket_config import DB_ENDPOINT, DEFAULT_SERVICE_ENDPOINT
-from .service import Microservice, Request
+from .servers_config import DB_ENDPOINT, DEFAULT_SERVICE_ENDPOINT
+from .microservice import Microservice, Request
 from .transport import recv_message, send_message, bytes_from_hex, hex_from_bytes
-from .storage.socket_client import SocketDatabaseClient
+from .storage.db_client import SocketDatabaseClient
 
 
-class SocketMicroserviceServer:
+class MicroserviceServer:
     """TCP server that exposes the existing `Microservice` API.
 
         Protocol (request):
@@ -34,7 +34,7 @@ class SocketMicroserviceServer:
             pool_size=pool_size,
         )
 
-        self._sock: Optional[socket.socket] = None
+        self._socket: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
@@ -42,13 +42,11 @@ class SocketMicroserviceServer:
         if self._thread and self._thread.is_alive():
             return
 
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((self.host, self.port))
-        # If port=0 was used, OS picks an ephemeral port; publish it.
-        self.port = int(self._sock.getsockname()[1])
-        self._sock.listen(128)
-        self._sock.settimeout(0.5)
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.bind((self.host, self.port))
+        self._socket.listen(128)
+        self._socket.settimeout(0.5)
 
         self._stop_event.clear()
         self._thread = threading.Thread(
@@ -60,18 +58,18 @@ class SocketMicroserviceServer:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
-        if self._sock:
+        if self._socket:
             try:
-                self._sock.close()
+                self._socket.close()
             except Exception:
                 pass
         self._service.stop()
 
     def _serve(self) -> None:
-        assert self._sock is not None
+        assert self._socket is not None
         while not self._stop_event.is_set():
             try:
-                conn, _addr = self._sock.accept()
+                conn, _addr = self._socket.accept()
             except socket.timeout:
                 continue
             except OSError:
@@ -97,7 +95,7 @@ class SocketMicroserviceServer:
     def _handle_message(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         method = (msg.get("method") or "").upper()
         data = msg.get("data")
-        
+
         if data is None:
             # Backwards compatibility: allow flat payloads.
             data = msg
@@ -135,7 +133,7 @@ class SocketMicroserviceServer:
         return result
 
 
-class SocketMicroserviceClient:
+class MicroserviceClient:
     """Frontend client for `SocketMicroserviceServer` over TCP."""
 
     def __init__(

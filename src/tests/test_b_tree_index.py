@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import emulator.storage.b_tree_index as btree_module
-import emulator.storage.database as database_module
+import emulator.storage.engine as database_module
 from emulator.utils import compute_hash_for
 
 
@@ -31,8 +31,8 @@ class TestBPlusTreeIndex(unittest.TestCase):
 
         self.addCleanup(self.temp_dir.cleanup)
 
-        self.db = database_module.FileDB(
-            lookup_strategy=database_module.FileDB.STRATEGY_BPLUS
+        self.db = database_module.DbEngine(
+            lookup_strategy=database_module.DbEngine.STRATEGY_BPLUS
         )
         self.db.ensure_capacity(128)
         self.db.populate_range(0, 128)

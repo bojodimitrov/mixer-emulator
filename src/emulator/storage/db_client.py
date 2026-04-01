@@ -4,7 +4,7 @@ import threading
 from contextlib import suppress
 from typing import Optional, Tuple
 
-from ..socket_config import DB_ENDPOINT
+from ..servers_config import DB_ENDPOINT
 from ..transport import TcpEndpoint, recv_message, send_message, hex_from_bytes
 
 

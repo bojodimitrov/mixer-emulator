@@ -4,10 +4,13 @@ import time
 import unittest
 from unittest.mock import patch
 
-import emulator.storage.database as database_module
-from emulator.storage.socket_server import SocketDatabaseServer
-from emulator.socket_microservice import SocketMicroserviceClient, SocketMicroserviceServer
-from emulator.socket_config import DbEndpoint, ServiceEndpoint
+import emulator.storage.engine as database_module
+from emulator.storage.db_server import DbServer
+from emulator.microservice_server import (
+    MicroserviceClient,
+    MicroserviceServer,
+)
+from emulator.servers_config import DbEndpoint, ServiceEndpoint
 from emulator.utils import compute_hash_for, id_to_name
 
 
@@ -27,15 +30,15 @@ class TestSocketDecoupling(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-        self.db = database_module.FileDB()
+        self.db = database_module.DbEngine()
         self.db.ensure_capacity(64)
         self.db.populate_range(0, 64)
 
-        self.db_server = SocketDatabaseServer()
+        self.db_server = DbServer()
         self.db_server.start()
         self.addCleanup(self.db_server.close)
 
-        self.svc_server = SocketMicroserviceServer(
+        self.svc_server = MicroserviceServer(
             latency_ms=0,
             pool_size=10,
         )
@@ -51,7 +54,7 @@ class TestSocketDecoupling(unittest.TestCase):
     def test_query_and_update_over_sockets(self):
         from emulator.transport import hex_from_bytes
 
-        client = SocketMicroserviceClient()
+        client = MicroserviceClient()
 
         record_id = 7
         name_b = id_to_name(record_id)

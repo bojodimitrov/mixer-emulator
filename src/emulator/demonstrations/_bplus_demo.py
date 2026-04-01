@@ -22,16 +22,16 @@ from __future__ import annotations
 import random
 import time
 
-from ..storage.database import FileDB
-from ..storage.socket_client import SocketDatabaseClient
-from ..storage.socket_server import SocketDatabaseServer
-from ..socket_config import DB_ENDPOINT
+from ..storage.engine import DbEngine
+from ..storage.db_client import SocketDatabaseClient
+from ..storage.db_server import DbServer
+from ..servers_config import DB_ENDPOINT
 from ..utils import compute_hash_for
 
 
 def run_socket_bplus_demo() -> None:
     # Pick a random record from the DB (read directly from the on-disk DB file).
-    db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
+    db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
     record_count = db.record_count()
     if record_count <= 0:
         raise RuntimeError(
@@ -41,12 +41,12 @@ def run_socket_bplus_demo() -> None:
     record_id = random.randint(0, record_count - 1)
     _id_read, old_name, old_hash = db.read_record(record_id)
 
-      # Start socket DB server in B+ mode.
-    server = SocketDatabaseServer(lookup_strategy=FileDB.STRATEGY_BPLUS)
+    # Start socket DB server in B+ mode.
+    server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
     server.start()
     try:
-  # Use pooling (thread-safe) instead of keepalive.
-  # The client will eagerly create half of pool_size connections on init.
+        # Use pooling (thread-safe) instead of keepalive.
+        # The client will eagerly create half of pool_size connections on init.
         client = SocketDatabaseClient(pool_size=20)
 
         print("== B+ tree socket demo ==")

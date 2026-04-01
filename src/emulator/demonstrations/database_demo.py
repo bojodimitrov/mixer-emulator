@@ -2,35 +2,35 @@ import random
 import time
 from typing import Tuple
 
-from ..storage.database import FileDB
-from ..storage.server import DatabaseRequest, DatabaseServer
+from ..storage.engine import DbEngine
+from ..storage.server import DbRequest, DbOrchestrator
 from ..utils import compute_hash_for
 
 
 def _measure_lookup(
-    server: DatabaseServer, strategy_name: str, hash_bytes: bytes
+    server: DbOrchestrator, strategy_name: str, hash_bytes: bytes
 ) -> None:
     t0 = time.perf_counter()
-    result = server.handle_request(DatabaseRequest("Query", {"hash_bytes": hash_bytes}))
+    result = server.handle_request(DbRequest("Query", {"hash_bytes": hash_bytes}))
     t1 = time.perf_counter()
     print(f"{strategy_name:>6} -> {result}")
     print(f"{strategy_name:>6} lookup took {(t1 - t0) * 1000:.3f} ms")
     print()
 
 
-def create_servers() -> Tuple[DatabaseServer, DatabaseServer, DatabaseServer]:
+def create_servers() -> Tuple[DbOrchestrator, DbOrchestrator, DbOrchestrator]:
     return (
-        DatabaseServer(lookup_strategy=FileDB.STRATEGY_LINEAR),
-        DatabaseServer(lookup_strategy=FileDB.STRATEGY_SORTED),
-        DatabaseServer(lookup_strategy=FileDB.STRATEGY_BPLUS),
+        DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_LINEAR),
+        DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_SORTED),
+        DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_BPLUS),
     )
 
 
 def run_lookup_demo(
-    linear_db: FileDB,
-    linear_server: DatabaseServer,
-    sorted_server: DatabaseServer,
-    bplus_server: DatabaseServer,
+    linear_db: DbEngine,
+    linear_server: DbOrchestrator,
+    sorted_server: DbOrchestrator,
+    bplus_server: DbOrchestrator,
 ) -> None:
     record_count = linear_db.record_count()
     record_id = random.randint(0, record_count - 1)
@@ -46,7 +46,7 @@ def run_lookup_demo(
     _measure_lookup(bplus_server, "bplus", hashb)
 
 
-def run_update_demo(linear_db: FileDB, bplus_server: DatabaseServer) -> None:
+def run_update_demo(linear_db: DbEngine, bplus_server: DbOrchestrator) -> None:
     record_count = linear_db.record_count()
 
     update_id = random.randint(0, record_count - 1)
@@ -55,27 +55,27 @@ def run_update_demo(linear_db: FileDB, bplus_server: DatabaseServer) -> None:
 
     t0 = time.perf_counter()
     updated = bplus_server.handle_request(
-        DatabaseRequest("Command", {"id": update_id, "new_name": updated_name})
+        DbRequest("Command", {"id": update_id, "new_name": updated_name})
     )
     t1 = time.perf_counter()
     print(f"bplus update id={update_id} -> {updated}")
     print(f"bplus update took {(t1 - t0) * 1000:.3f} ms")
 
     updated_result = bplus_server.handle_request(
-        DatabaseRequest(
+        DbRequest(
             "Query",
             {"hash_bytes": compute_hash_for(update_id, updated_name.encode("ascii"))},
         )
     )
     old_result = bplus_server.handle_request(
-        DatabaseRequest("Query", {"hash_bytes": old_update_hash})
+        DbRequest("Query", {"hash_bytes": old_update_hash})
     )
     print(f"bplus verify new hash -> {updated_result}")
     print(f"bplus verify old hash -> {old_result}")
 
 
 def run_database_demo() -> None:
-    linear_db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
+    linear_db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
     linear_server, sorted_server, bplus_server = create_servers()
 
     record_count = linear_db.record_count()
