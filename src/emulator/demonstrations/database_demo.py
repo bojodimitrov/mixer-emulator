@@ -78,5 +78,18 @@ def run_database_demo() -> None:
     linear_db = FileDB(lookup_strategy=FileDB.STRATEGY_LINEAR)
     linear_server, sorted_server, bplus_server = create_servers()
 
-    run_lookup_demo(linear_db, linear_server, sorted_server, bplus_server)
-    run_update_demo(linear_db, bplus_server)
+    record_count = linear_db.record_count()
+    record_id = random.randint(0, record_count - 1)
+
+    t0 = time.perf_counter()
+    id_read, name, hashb = linear_db.read_record(record_id)
+    t1 = time.perf_counter()
+    print(f"Read record {record_id} in {(t1 - t0) * 1000:.3f} ms")
+    print(f"id={id_read} name={name} hash={hashb.hex()}")
+
+    _measure_lookup(bplus_server, "bplus", hashb)
+    _measure_lookup(bplus_server, "bplus", hashb)
+    _measure_lookup(bplus_server, "bplus", hashb)
+
+    # run_lookup_demo(linear_db, linear_server, sorted_server, bplus_server)
+    # run_update_demo(linear_db, bplus_server)

@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import emulator.storage.database as database_module
+from emulator.utils import compute_hash_for
 
 
 class TestFileDB(unittest.TestCase):
@@ -36,7 +37,7 @@ class TestFileDB(unittest.TestCase):
         self.assertEqual(id_read, record_id)
         self.assertEqual(name, "aaaah")
         self.assertEqual(
-            hash_bytes, self.db.compute_hash_for(record_id, name.encode("ascii"))
+            hash_bytes, compute_hash_for(record_id, name.encode("ascii"))
         )
 
     def test_query_by_hash_returns_matching_record(self):

@@ -1,0 +1,76 @@
+import os
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+import emulator.storage.database as database_module
+from emulator.storage.socket_server import SocketDatabaseServer
+from emulator.socket_microservice import SocketMicroserviceClient, SocketMicroserviceServer
+from emulator.utils import compute_hash_for, id_to_name
+
+
+class TestSocketDecoupling(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.temp_dir.name, "test.db")
+        self.idx_path = os.path.join(self.temp_dir.name, "test.idx")
+        self.bpt_path = os.path.join(self.temp_dir.name, "test.bpt")
+
+        patches = [
+            patch.object(database_module, "DEFAULT_DB_PATH", self.db_path),
+            patch.object(database_module, "DEFAULT_INDEX_PATH", self.idx_path),
+            patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", self.bpt_path),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        self.db = database_module.FileDB()
+        self.db.ensure_capacity(64)
+        self.db.populate_range(0, 64)
+
+        self.db_server = SocketDatabaseServer(host="127.0.0.1", port=5601)
+        self.db_server.start()
+        self.addCleanup(self.db_server.close)
+
+        self.svc_server = SocketMicroserviceServer(
+            host="127.0.0.1",
+            port=5602,
+            db_host="127.0.0.1",
+            db_port=5601,
+            latency_ms=0,
+            pool_size=10,
+        )
+        self.svc_server.start()
+        self.addCleanup(self.svc_server.close)
+
+        # crude readiness wait
+        time.sleep(0.05)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_query_and_update_over_sockets(self):
+        client = SocketMicroserviceClient(host="127.0.0.1", port=5602)
+
+        record_id = 7
+        name_b = id_to_name(record_id)
+        h = compute_hash_for(record_id, name_b)
+
+        resp = client.get(h)
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(resp["result"], [record_id, name_b.decode("ascii")])
+
+        resp2 = client.post(record_id, "zzzzz")
+        self.assertEqual(resp2["status"], "ok")
+        self.assertTrue(resp2["result"])
+
+        # old hash should no longer match
+        resp3 = client.get(h)
+        self.assertEqual(resp3["status"], "ok")
+        self.assertIsNone(resp3["result"])
+
+
+if __name__ == "__main__":
+    unittest.main()

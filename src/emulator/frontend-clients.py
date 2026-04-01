@@ -86,9 +86,6 @@ class Corrupter:
             _send_request(self.service, "POST", entry["payload"])
             _sleep_pause(entry.get("pause_ms"), self.pause_range_ms)
 
-    def compute(self, *args, **kwargs):
-        raise NotImplementedError("compute() is reserved for the next step")
-
 
 # ---------------------------------------------------------------------------
 # Repairer
