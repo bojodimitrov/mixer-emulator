@@ -2,20 +2,22 @@
 
 ## Overview
 
-This repository is a Python file-backed database emulator built around fixed-size binary records and hash-based lookup strategies. The project now includes:
+This repository is a Python data-system emulator built on a local file database, hash indexes, and TCP service layers.
 
-- A fixed-size mmap-backed database file
-- Three lookup strategies: linear scan, sorted flat index, and B+ tree
-- A thread-pool database server for concurrent request handling
-- A lightweight service/client wrapper for request simulation
-- Writable sorted-index and B+ tree update paths
-- Cross-process file locking so multiple readers can share the database while writes are serialized
+It includes:
+
+- A mmap-backed file database with cross-process read/write locking
+- Three lookup strategies: linear scan, sorted flat index, and B+ tree index
+- In-process orchestration (`DbOrchestrator`) plus socket server/client layers (`DbServer`, `DbClient`)
+- A microservice layer (`MicroserviceServer`, `MicroserviceClient`) and frontend runners for corruption/repair flows
+- Writable sorted-index and B+ tree update paths with rollback on index update failure
 
 ## Project Structure
 
 ```
 .
 ├── db/
+│   ├── mixer_emulator_bin.db
 │   ├── mixer_emulator.bpt
 │   ├── mixer_emulator.idx
 │   ├── tmp/
@@ -23,23 +25,36 @@ This repository is a Python file-backed database emulator built around fixed-siz
 ├── src/
 │   ├── emulator/
 │   │   ├── __init__.py
-│   │   ├── client.py
 │   │   ├── main.py
-│   │   ├── service.py
+│   │   ├── frontend/
+│   │   │   └── clients.py
+│   │   ├── microservice/
+│   │   │   ├── client.py
+│   │   │   ├── framework.py
+│   │   │   └── server.py
 │   │   ├── demonstrations/
 │   │   │   ├── __init__.py
 │   │   │   └── database_demo.py
 │   │   ├── storage/
 │   │   │   ├── __init__.py
 │   │   │   ├── b_tree_index.py
+│   │   │   ├── client.py
 │   │   │   ├── constants.py
 │   │   │   ├── database.py
+│   │   │   ├── engine.py
+│   │   │   ├── orchestrator.py
 │   │   │   ├── server.py
 │   │   │   └── sorted_index.py
+│   │   ├── transport_layer/
+│   │   │   └── transport.py
 │   │   └── utils.py
 │   └── tests/
 │       ├── __init__.py
 │       ├── test_b_tree_index.py
+│       ├── test_file_db.py
+│       ├── test_frontend_clients.py
+│       ├── test_server_components.py
+│       ├── test_server_connection.py
 │       ├── test_sorted_index.py
 │       └── test_utils.py
 ├── pyproject.toml
@@ -73,10 +88,10 @@ Install in editable mode:
 pip install -e .
 ```
 
-Alternative without editable install:
+Alternative without editable install (bash/zsh):
 
 ```bash
-PYTHONPATH=src
+export PYTHONPATH=src
 ```
 
 On Windows PowerShell:
@@ -119,18 +134,18 @@ python -m emulator.main
 
 The demo:
 
-- Creates three `DatabaseServer` instances, one per lookup strategy
+- Creates three `DbOrchestrator` instances, one per lookup strategy
 - Reads a random record directly from the database
 - Compares linear, sorted-index, and B+ tree lookup latency
 - Executes a writable B+ tree update and verifies the old hash disappears
 
-## Server And Service Layers
+## Server and Service Layers
 
 The repository has two request-handling layers.
 
-### `DatabaseServer`
+### `DbOrchestrator`
 
-`emulator.storage.server.DatabaseServer` is the main concurrent execution layer. It uses a fixed-size thread pool and a shared `FileDB` instance to process requests.
+`emulator.storage.orchestrator.DbOrchestrator` is the main in-process concurrent execution layer. It uses a fixed-size thread pool and a shared `DbEngine` instance to process requests.
 
 Supported request types:
 
@@ -140,33 +155,34 @@ Supported request types:
 Example:
 
 ```python
-from emulator.storage import DatabaseRequest, DatabaseServer
-from emulator.storage.database import FileDB
+from emulator.storage.orchestrator import DbRequest, DbOrchestrator
+from emulator.storage.engine import DbEngine
 
-server = DatabaseServer(lookup_strategy=FileDB.STRATEGY_BPLUS)
-result = server.handle_request(DatabaseRequest("Query", {"hash_bytes": some_hash}))
-updated = server.handle_request(DatabaseRequest("Command", {"id": 42, "new_name": "zzzzz"}))
+server = DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_BPLUS)
+result = server.handle_request(DbRequest("Query", {"hash_bytes": some_hash}))
+updated = server.handle_request(DbRequest("Command", {"id": 42, "new_name": "zzzzz"}))
 server.close()
 ```
 
-### `Microservice` / `Client`
+### `Microservice` / `MicroserviceClient`
 
-`emulator.service.Microservice` and `emulator.client.Client` provide a lightweight queue-based wrapper that can simulate service latency. This layer is useful for demonstrations, but the thread-pool `DatabaseServer` is the more complete concurrency primitive in the current codebase.
+`emulator.microservice.framework.Microservice` and `emulator.microservice.client.MicroserviceClient` provide a lightweight service wrapper that can simulate latency and expose GET/POST semantics over TCP.
 
-## Socket-based Decoupling (DB ↔ Service ↔ Frontend)
+## Socket-based Decoupling (DB -> Service -> Frontend)
 
 In addition to the in-process queue-based components, the repo includes a small JSON-over-TCP layer that lets you run the database, microservice, and frontend as separate processes.
 
 Key modules:
 
-- `emulator/transport.py`: length-prefixed JSON framing (`send_message` / `recv_message`)
-- `emulator/storage/socket_server.py`: `SocketDatabaseServer` (TCP wrapper around `DatabaseServer`)
-- `emulator/storage/socket_client.py`: `SocketDatabaseClient`
-- `emulator/socket_microservice.py`: `SocketMicroserviceServer` / `SocketMicroserviceClient`
+- `emulator/transport_layer/transport.py`: length-prefixed JSON framing (`send_message` / `recv_message`)
+- `emulator/storage/server.py`: `DbServer` (TCP wrapper around `DbOrchestrator`)
+- `emulator/storage/client.py`: `DbClient`
+- `emulator/microservice/server.py`: `MicroserviceServer`
+- `emulator/microservice/client.py`: `MicroserviceClient`
 
 ### Architecture diagram
 
-This shows the request flow inside `SocketDatabaseServer`, and specifically what `self._thread` does.
+This shows the request flow inside `DbServer`, and specifically what `self._thread` does.
 
 ```text
 Caller thread
@@ -174,7 +190,7 @@ Caller thread
   |  start()
   v
 +---------------------------+
-| SocketDatabaseServer      |
+| DbServer                  |
 |  - _sock (listening TCP)  |
 |  - _stop_event            |
 |  - _executor (threadpool) |
@@ -231,11 +247,11 @@ pytest src/tests
 Current test coverage includes:
 
 - Core database read and linear-hash lookup behavior
-- Concurrent reads across multiple `FileDB` connections
+- Concurrent reads across multiple `DbEngine` connections
 - Sorted index build, lookup, insert, delete, and update dispatch
 - B+ tree build, lookup, insert, delete, update, and small-capacity regression cases
 
-There are currently 17 unit tests across the three test modules.
+The suite currently includes server, client, transport, and storage tests.
 
 ## File Formats
 
@@ -335,7 +351,7 @@ Lookup path: root → internal nodes → leaf → binary search inside the leaf.
 
 ## Lookup Strategies
 
-`FileDB` supports three lookup modes:
+`DbEngine` supports three lookup modes:
 
 - `linear`: scan the database file directly
 - `sorted`: binary search against `db/mixer_emulator.idx`
@@ -344,9 +360,9 @@ Lookup path: root → internal nodes → leaf → binary search inside the leaf.
 Example:
 
 ```python
-from emulator.storage.database import FileDB
+from emulator.storage.engine import DbEngine
 
-db = FileDB(lookup_strategy=FileDB.STRATEGY_BPLUS)
+db = DbEngine(lookup_strategy=DbEngine.STRATEGY_BPLUS)
 result = db.query_by_hash(hash_bytes)
 ```
 
@@ -381,11 +397,11 @@ This is an illustrative example, not a strict performance guarantee.
 
 ## Concurrency And Locking
 
-`FileDB` now uses a sidecar lock file at `db/mixer_emulator_bin.db.lock`.
+`DbEngine` uses a sidecar lock file at `db/mixer_emulator_bin.db.lock`.
 
 - Read operations acquire a shared lock
 - Write operations acquire an exclusive lock
-- Separate `FileDB` instances can read concurrently
+- Separate `DbEngine` instances can read concurrently
 - Writes are serialized across processes and threads
 
 This locking is implemented with platform-specific primitives and works on Windows and Unix-like systems.
@@ -397,9 +413,9 @@ Both on-disk index types now have writable update support, but with different tr
 ### Via Database Class
 
 ```python
-from emulator.storage.database import FileDB
+from emulator.storage.engine import DbEngine
 
-db = FileDB(lookup_strategy=FileDB.STRATEGY_BPLUS)
+db = DbEngine(lookup_strategy=DbEngine.STRATEGY_BPLUS)
 # Update record's name and sync B-tree index
 db.update_record_with_bplus_index(
     42,
@@ -410,9 +426,9 @@ db.update_record_with_bplus_index(
 You can also use generic dispatch based on the configured lookup strategy:
 
 ```python
-from emulator.storage.database import FileDB
+from emulator.storage.engine import DbEngine
 
-db = FileDB(lookup_strategy=FileDB.STRATEGY_SORTED)
+db = DbEngine(lookup_strategy=DbEngine.STRATEGY_SORTED)
 db.update_record(42, "zzzzz")
 ```
 

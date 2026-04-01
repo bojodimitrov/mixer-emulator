@@ -62,8 +62,6 @@ class DbServer:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind((self.host, self.port))
-        # If port=0 was used, OS picks an ephemeral port; publish it.
-        self.port = int(self._socket.getsockname()[1])
         self._socket.listen(self.max_connections)
         self._socket.settimeout(self.accept_timeout_sec)
 
@@ -92,6 +90,7 @@ class DbServer:
     def _serve(self) -> None:
         assert self._socket is not None
         assert self._executor is not None
+
         while not self._stop_event.is_set():
             try:
                 conn, _addr = self._socket.accept()
@@ -101,38 +100,38 @@ class DbServer:
                 break
 
             # Hand off to worker pool.
-            self._executor.submit(self._handle_conn, conn)
+            self._executor.submit(self._handle_connection, conn)
 
-    def _handle_conn(self, conn: socket.socket) -> None:
-        with conn:
+    def _handle_connection(self, connection: socket.socket) -> None:
+        with connection:
             if self.tcp_nodelay:
                 try:
-                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 except OSError:
                     pass
 
-            conn.settimeout(self.conn_timeout_sec)
+            connection.settimeout(self.conn_timeout_sec)
 
             # Keep-alive: process multiple request/response pairs on the same TCP connection.
             while not self._stop_event.is_set():
                 try:
-                    req = recv_message(conn)
+                    req = recv_message(connection)
                 except (ConnectionError, OSError, socket.timeout):
                     # Client disconnected / idle timeout / socket died.
                     return
                 except Exception as exc:
-                    send_message(conn, {"status": "error", "error": str(exc)})
+                    send_message(connection, {"status": "error", "error": str(exc)})
                     continue
 
                 if req.get("op") == "Close":
-                    send_message(conn, {"status": "ok", "result": True})
+                    send_message(connection, {"status": "ok", "result": True})
                     return
 
                 try:
                     resp = self._dispatch(req)
                 except Exception as exc:
                     resp = {"status": "error", "error": str(exc)}
-                send_message(conn, resp)
+                send_message(connection, resp)
 
     def _dispatch(self, req: Dict[str, Any]) -> Dict[str, Any]:
         op = req.get("op")

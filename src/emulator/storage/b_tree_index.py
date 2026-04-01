@@ -1,22 +1,18 @@
 import argparse
-import heapq
 import math
-import mmap
 import os
 import struct
-import tempfile
 from typing import Iterator, List, Optional, Tuple
 
 from emulator.utils import print_time
 
 from .constants import (
     DB_RECORD_SIZE,
-    DB_HASH_OFFSET,
-    INDEX_STRUCT,
     INDEX_RECORD_SIZE,
     DEFAULT_BPLUS_INDEX_PATH,
     DEFAULT_DB_PATH,
 )
+from .external_sort import build_sorted_hash_pairs
 
 
 PAGE_SIZE = 4096
@@ -53,32 +49,18 @@ class BPlusTreeBuilder:
         os.makedirs(self.tmp_dir, exist_ok=True)
         os.makedirs(os.path.dirname(self.out_path) or ".", exist_ok=True)
 
-    @staticmethod
-    def _print_progress(
-        prefix: str, current: int, total: int, suffix: str = ""
-    ) -> None:
-        bar_width = 30
-        pct = (current / total) * 100 if total else 100.0
-        filled = int((current / total) * bar_width) if total else bar_width
-        bar = "#" * filled + "-" * (bar_width - filled)
-        text = f"\r{prefix} [{bar}] {pct:6.2f}% {current}/{total}"
-        if suffix:
-            text += f" | {suffix}"
-        print(text, end="" if current < total else "\n", flush=True)
-
     def build(self) -> None:
-        if not os.path.exists(self.db_path):
-            raise FileNotFoundError(f"database file not found: {self.db_path}")
-
-        total_records = os.path.getsize(self.db_path) // DB_RECORD_SIZE
-        if total_records == 0:
-            raise ValueError(
-                "database is empty; build it first with `python -m emulator.storage.database`"
-            )
-
         # Extract and sort (hash, id) pairs from database using external sort
         sorted_pairs_path = os.path.join(self.tmp_dir, "sorted_pairs.tmp")
-        self._extract_and_sort_from_db(total_records, sorted_pairs_path)
+        total_records = build_sorted_hash_pairs(
+            db_path=self.db_path,
+            out_path=sorted_pairs_path,
+            tmp_dir=self.tmp_dir,
+            chunk_size=self.chunk_size,
+            chunk_prefix="Extracting chunks",
+            merge_prefix="Merging pairs",
+            tmp_prefix="bpt_chunk_",
+        )
 
         # Build B+ tree from sorted pairs
         with open(sorted_pairs_path, "rb") as src, open(self.out_path, "w+b") as dst:
@@ -106,75 +88,6 @@ class BPlusTreeBuilder:
             os.remove(sorted_pairs_path)
         except OSError:
             pass
-
-    def _extract_and_sort_from_db(self, total_records: int, out_path: str) -> None:
-        """Extract (hash, id) pairs from database and sort using external sort."""
-        tmp_files: List[str] = []
-        chunk_count = (total_records + self.chunk_size - 1) // self.chunk_size
-
-        with open(self.db_path, "rb") as dbf:
-            db_mm = mmap.mmap(dbf.fileno(), 0, access=mmap.ACCESS_READ)
-            try:
-                for chunk_number, start in enumerate(
-                    range(0, total_records, self.chunk_size), 1
-                ):
-                    end = min(total_records, start + self.chunk_size)
-                    self._print_progress(
-                        "Extracting chunks",
-                        chunk_number,
-                        chunk_count,
-                        suffix=f"records {start}..{end - 1}",
-                    )
-                    entries: List[Tuple[bytes, int]] = []
-                    for id_ in range(start, end):
-                        off = id_ * DB_RECORD_SIZE
-                        hb = db_mm[off + DB_HASH_OFFSET : off + DB_HASH_OFFSET + 32]
-                        entries.append((hb, id_))
-                    entries.sort(key=lambda x: x[0])
-
-                    fd, tmp_path = tempfile.mkstemp(
-                        prefix="bpt_chunk_", dir=self.tmp_dir
-                    )
-                    os.close(fd)
-                    with open(tmp_path, "wb") as tf:
-                        for hb, id_ in entries:
-                            tf.write(struct.pack(INDEX_STRUCT, hb, id_))
-                    tmp_files.append(tmp_path)
-                    del entries
-            finally:
-                db_mm.close()
-
-        print(f"Merging {len(tmp_files)} chunk files", flush=True)
-        self._merge_sorted_chunks(tmp_files, out_path, total_records)
-
-        for p in tmp_files:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-    def _iter_chunk(self, path: str) -> Iterator[Tuple[bytes, int]]:
-        """Iterator over (hash, id) pairs from a chunk file."""
-        with open(path, "rb") as f:
-            while True:
-                data = f.read(INDEX_RECORD_SIZE)
-                if not data:
-                    break
-                hb, id_ = struct.unpack(INDEX_STRUCT, data)
-                yield (hb, id_)
-
-    def _merge_sorted_chunks(
-        self, chunk_paths: List[str], out_path: str, total_records: int
-    ) -> None:
-        """Merge sorted chunk files into a single sorted output file."""
-        iterators = [self._iter_chunk(p) for p in chunk_paths]
-        with open(out_path, "wb") as out:
-            merged = 0
-            for hb, id_ in heapq.merge(*iterators):
-                out.write(struct.pack(INDEX_STRUCT, hb, id_))
-                merged += 1
-                if merged % 10000 == 0 or merged == total_records:
-                    self._print_progress("Merging pairs", merged, total_records)
 
     def _write_leaf_level(self, src, dst, total_records: int) -> List[int]:
         leaf_pages: List[int] = []

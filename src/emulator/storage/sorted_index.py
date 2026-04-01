@@ -1,21 +1,18 @@
 import argparse
-import heapq
 import mmap
 import os
 import struct
-import tempfile
-from typing import Iterator, List, Optional, Tuple
+from typing import Optional
 
 from emulator.utils import print_time
 
 from .constants import (
-    DB_RECORD_SIZE,
-    DB_HASH_OFFSET,
     INDEX_STRUCT,
     INDEX_RECORD_SIZE,
     DEFAULT_INDEX_PATH,
     DEFAULT_DB_PATH,
 )
+from .external_sort import build_sorted_hash_pairs
 
 
 class IndexBuilder:
@@ -32,94 +29,17 @@ class IndexBuilder:
         os.makedirs(self.tmp_dir, exist_ok=True)
         os.makedirs(os.path.dirname(DEFAULT_INDEX_PATH) or ".", exist_ok=True)
 
-    @staticmethod
-    def _print_progress(
-        prefix: str, current: int, total: int, suffix: str = ""
-    ) -> None:
-        bar_width = 30
-        pct = (current / total) * 100 if total else 100.0
-        filled = int((current / total) * bar_width) if total else bar_width
-        bar = "#" * filled + "-" * (bar_width - filled)
-        text = f"\r{prefix} [{bar}] {pct:6.2f}% {current}/{total}"
-        if suffix:
-            text += f" | {suffix}"
-        print(text, end="" if current < total else "\n", flush=True)
-
     def build(self) -> None:
-        tmp_files: List[str] = []
-        if not os.path.exists(DEFAULT_DB_PATH):
-            raise FileNotFoundError(f"database file not found: {DEFAULT_DB_PATH}")
-
-        total_records = os.path.getsize(DEFAULT_DB_PATH) // DB_RECORD_SIZE
-        if total_records == 0:
-            raise ValueError(
-                "database is empty; build it first with `python -m emulator.storage.database`"
-            )
-
-        chunk_count = (total_records + self.chunk_size - 1) // self.chunk_size
-        with open(DEFAULT_DB_PATH, "rb") as dbf:
-            db_mm = mmap.mmap(dbf.fileno(), 0, access=mmap.ACCESS_READ)
-            try:
-                for chunk_number, start in enumerate(
-                    range(0, total_records, self.chunk_size), 1
-                ):
-                    end = min(total_records, start + self.chunk_size)
-                    self._print_progress(
-                        "Building chunks",
-                        chunk_number,
-                        chunk_count,
-                        suffix=f"records {start}..{end - 1}",
-                    )
-                    entries: List[Tuple[bytes, int]] = []
-                    for id_ in range(start, end):
-                        off = id_ * DB_RECORD_SIZE
-                        hb = db_mm[off + DB_HASH_OFFSET : off + DB_HASH_OFFSET + 32]
-                        entries.append((hb, id_))
-                    entries.sort(key=lambda x: x[0])
-                    fd, tmp_path = tempfile.mkstemp(
-                        prefix="idx_chunk_", dir=self.tmp_dir
-                    )
-                    os.close(fd)
-                    with open(tmp_path, "wb") as tf:
-                        for hb, id_ in entries:
-                            tf.write(struct.pack(INDEX_STRUCT, hb, id_))
-                    tmp_files.append(tmp_path)
-                    del entries
-            finally:
-                db_mm.close()
-
-        print(
-            f"Merging {len(tmp_files)} chunk files into {DEFAULT_INDEX_PATH}",
-            flush=True,
+        build_sorted_hash_pairs(
+            db_path=DEFAULT_DB_PATH,
+            out_path=DEFAULT_INDEX_PATH,
+            tmp_dir=self.tmp_dir,
+            chunk_size=self.chunk_size,
+            chunk_prefix="Building chunks",
+            merge_prefix="Merging index",
+            tmp_prefix="idx_chunk_",
+            merge_message=f"Merging chunk files into {DEFAULT_INDEX_PATH}",
         )
-        self._merge_chunks(tmp_files, DEFAULT_INDEX_PATH, total_records)
-
-        for p in tmp_files:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-    def _iter_chunk(self, path: str) -> Iterator[Tuple[bytes, int]]:
-        with open(path, "rb") as f:
-            while True:
-                data = f.read(INDEX_RECORD_SIZE)
-                if not data:
-                    break
-                hb, id_ = struct.unpack(INDEX_STRUCT, data)
-                yield (hb, id_)
-
-    def _merge_chunks(
-        self, chunk_paths: List[str], out_path: str, total_records: int
-    ) -> None:
-        iterators = [self._iter_chunk(p) for p in chunk_paths]
-        with open(out_path, "wb") as out:
-            merged = 0
-            for hb, id_ in heapq.merge(*iterators):
-                out.write(struct.pack(INDEX_STRUCT, hb, id_))
-                merged += 1
-                if merged % 10000 == 0 or merged == total_records:
-                    self._print_progress("Merging index", merged, total_records)
 
 
 class HashIndex:
