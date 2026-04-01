@@ -348,12 +348,12 @@ class DbEngine:
                             f.write(old_packed)
                             f.flush()
                             return False
-                except RuntimeError as e:
+                except Exception:
                     old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
                     f.seek(id_ * RECORD_SIZE)
                     f.write(old_packed)
                     f.flush()
-                    raise e
+                    raise
 
         return True
 

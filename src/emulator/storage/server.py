@@ -75,13 +75,16 @@ class DbServer:
 
     def close(self) -> None:
         self._stop_event.set()
+
         if self._thread:
             self._thread.join(timeout=2)
+
         if self._socket:
             try:
                 self._socket.close()
-            except Exception:
+            except OSError:
                 pass
+
         if self._executor:
             self._executor.shutdown(wait=True)
         self._db_server.close()

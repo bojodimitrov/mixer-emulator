@@ -7,7 +7,6 @@ from .framework import Microservice, Request
 from ..transport_layer.transport import (
     recv_message,
     send_message,
-    bytes_from_hex,
 )
 from ..storage.client import DbClient
 
@@ -65,7 +64,7 @@ class MicroserviceServer:
         if self._socket:
             try:
                 self._socket.close()
-            except Exception:
+            except OSError:
                 pass
         self._service.stop()
 

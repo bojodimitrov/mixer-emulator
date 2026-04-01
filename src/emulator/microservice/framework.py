@@ -56,6 +56,9 @@ class Microservice:
                 new_name = req.payload["new_name"]
                 updated = self.db_client.command(id_, new_name)
                 req.reply_q.put({"status": "ok", "result": updated})
+                return
+
+            raise ValueError(f"unsupported method: {req.method}")
 
         except Exception as exc:
             req.reply_q.put({"status": "error", "error": str(exc)})
