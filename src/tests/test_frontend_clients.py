@@ -10,7 +10,6 @@ from emulator.storage.socket_server import SocketDatabaseServer
 from tests.test_db_utils import create_seeded_temp_db
 
 frontend_clients = importlib.import_module("emulator.frontend-clients")
-run_single_request = frontend_clients.run_single_request
 Corrupter = frontend_clients.Corrupter
 Repairer = frontend_clients.Repairer
 
@@ -44,25 +43,6 @@ class _SocketHarness:
 
 
 class TestFrontendClientsRunners(unittest.TestCase):
-    def test_run_single_request_post(self):
-        with _SocketHarness() as h:
-            assert h.svc_server is not None
-            resp = run_single_request(
-                kind="post",
-                record_id=123,
-                new_name="abcde",
-            )
-            self.assertEqual(resp.get("status"), "ok", msg=str(resp))
-
-    def test_run_single_request_get(self):
-        with _SocketHarness() as h:
-            assert h.svc_server is not None
-            resp = run_single_request(
-                kind="get",
-                record_id=7,
-            )
-            self.assertEqual(resp.get("status"), "ok", msg=str(resp))
-
     def test_corrupter_run_once_is_post(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None

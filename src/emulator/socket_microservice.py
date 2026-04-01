@@ -11,9 +11,9 @@ from .storage.socket_client import SocketDatabaseClient
 class SocketMicroserviceServer:
     """TCP server that exposes the existing `Microservice` API.
 
-    Protocol (request):
-      {"method": "GET", "hash": "<hex>"}
-      {"method": "POST", "id": <int>, "new_name": "abcde"}
+        Protocol (request):
+            {"method": "GET", "data": {"hash": "<hex>"}}
+            {"method": "POST", "data": {"id": <int>, "new_name": "abcde"}}
 
     Protocol (response):
       {"status": "ok", "result": ...}
@@ -96,17 +96,27 @@ class SocketMicroserviceServer:
 
     def _handle_message(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         method = (msg.get("method") or "").upper()
+        data = msg.get("data")
+        
+        if data is None:
+            # Backwards compatibility: allow flat payloads.
+            data = msg
+        if not isinstance(data, dict):
+            raise ValueError("request 'data' must be an object")
+
         if method == "GET":
-            hash_hex = msg.get("hash")
+            hash_hex = data.get("hash")
             if not isinstance(hash_hex, str):
                 raise ValueError("GET requires 'hash' hex string")
             payload = {"hash": bytes_from_hex(hash_hex)}
+
         elif method == "POST":
-            id_ = msg.get("id")
-            new_name = msg.get("new_name")
+            id_ = data.get("id")
+            new_name = data.get("new_name")
             if not isinstance(id_, int) or not isinstance(new_name, str):
                 raise ValueError("POST requires 'id' int and 'new_name' str")
             payload = {"id": id_, "new_name": new_name}
+
         else:
             raise ValueError("unknown method")
 
@@ -134,15 +144,13 @@ class SocketMicroserviceClient:
     ):
         from .transport import TcpEndpoint
 
-        self.endpoint = TcpEndpoint(DEFAULT_SERVICE_ENDPOINT.host, int(DEFAULT_SERVICE_ENDPOINT.port))
+        self.endpoint = TcpEndpoint(
+            DEFAULT_SERVICE_ENDPOINT.host, int(DEFAULT_SERVICE_ENDPOINT.port)
+        )
         self.timeout_sec = float(timeout_sec)
 
-    def get(self, hash_bytes: bytes) -> Dict[str, Any]:
-        with self.endpoint.connect(timeout_sec=self.timeout_sec) as socket:
-            send_message(socket, {"method": "GET", "hash": hex_from_bytes(hash_bytes)})
-            return recv_message(socket)
-
-    def post(self, id_: int, new_name: str) -> Dict[str, Any]:
+    def request(self, method: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a request to the microservice."""
         with self.endpoint.connect(timeout_sec=self.timeout_sec) as sock:
-            send_message(sock, {"method": "POST", "id": int(id_), "new_name": new_name})
+            send_message(sock, {"method": str(method).upper(), "data": data})
             return recv_message(sock)

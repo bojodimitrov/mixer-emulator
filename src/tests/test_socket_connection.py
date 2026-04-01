@@ -49,22 +49,24 @@ class TestSocketDecoupling(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_query_and_update_over_sockets(self):
+        from emulator.transport import hex_from_bytes
+
         client = SocketMicroserviceClient()
 
         record_id = 7
         name_b = id_to_name(record_id)
         h = compute_hash_for(record_id, name_b)
 
-        resp = client.get(h)
+        resp = client.request("GET", {"hash": hex_from_bytes(h)})
         self.assertEqual(resp["status"], "ok")
         self.assertEqual(resp["result"], [record_id, name_b.decode("ascii")])
 
-        resp2 = client.post(record_id, "zzzzz")
+        resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"})
         self.assertEqual(resp2["status"], "ok")
         self.assertTrue(resp2["result"])
 
         # old hash should no longer match
-        resp3 = client.get(h)
+        resp3 = client.request("GET", {"hash": hex_from_bytes(h)})
         self.assertEqual(resp3["status"], "ok")
         self.assertIsNone(resp3["result"])
 
