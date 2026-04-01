@@ -152,12 +152,38 @@ Main orchestration flags:
 
 The old database demo still exists under `emulator.demonstrations`.
 
-Demo behavior summary:
+## Orchestrator Throughput History
 
-- Creates three `DbOrchestrator` instances, one per lookup strategy
-- Reads a random record directly from the database
-- Compares linear, sorted-index, and B+ tree lookup latency
-- Executes a writable B+ tree update and verifies the old hash disappears
+Command used:
+
+```bash
+.venv/Scripts/python.exe -m emulator.main --duration-sec 30 --corrupters <n> --repairers <n>
+```
+
+Observed result:
+
+- With `6` corrupters and `24` repairers, the system was fairly stable.
+
+| Duration (s) | Corrupters | Repairers | DB ops/s | Service ops/s | Total errors |
+| ------------ | ---------: | --------: | -------: | ------------: | -----------: |
+| 30           |          6 |        24 |    56.49 |         56.49 |  3+1 layered |
+| 30           |          0 |        50 |   139.78 |        139.78 |            0 |
+| 30           |         15 |         0 |    16.24 |         16.24 |    5 layered |
+
+Quick read for first row:
+
+- Average sampled throughput was about `56.49 ops/s` across DB and microservice layers.
+- Repair traffic averaged about `44.30 ops/s`.
+- Corruption traffic averaged about `12.09 ops/s`.
+- End-of-run cumulative throughput reached `58.22 ops/s` for DB/service.
+- Errors were low but non-zero: `3` at DB/service level and `1` on corrupter requests.
+
+Notes:
+
+- Wait time between frontend clients requests is 100ms.
+- `Total errors` is currently recorded as layered counters, not a single end-to-end deduplicated value.
+- The current main bottleneck is the write-operation lock mechanism, which locks the whole table during writes.
+- A planned optimization is row-level locking so concurrent writes/read-write mixes scale more like modern SQL servers.
 
 ## Server and Service Layers
 
