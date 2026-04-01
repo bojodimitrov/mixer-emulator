@@ -27,36 +27,17 @@ It includes:
 │   │   ├── __init__.py
 │   │   ├── main.py
 │   │   ├── frontend/
-│   │   │   └── clients.py
+│   │   │   ├── ...
 │   │   ├── microservice/
-│   │   │   ├── client.py
-│   │   │   ├── framework.py
-│   │   │   └── server.py
+│   │   │   ├── ...
+│   │   ├── orchestrator/
+│   │   │   ├── ...
 │   │   ├── demonstrations/
-│   │   │   ├── __init__.py
-│   │   │   └── database_demo.py
 │   │   ├── storage/
-│   │   │   ├── __init__.py
-│   │   │   ├── b_tree_index.py
-│   │   │   ├── client.py
-│   │   │   ├── constants.py
-│   │   │   ├── database.py
-│   │   │   ├── engine.py
-│   │   │   ├── orchestrator.py
-│   │   │   ├── server.py
-│   │   │   └── sorted_index.py
+│   │   │   ├── ...
 │   │   ├── transport_layer/
-│   │   │   └── transport.py
 │   │   └── utils.py
 │   └── tests/
-│       ├── __init__.py
-│       ├── test_b_tree_index.py
-│       ├── test_file_db.py
-│       ├── test_frontend_clients.py
-│       ├── test_server_components.py
-│       ├── test_server_connection.py
-│       ├── test_sorted_index.py
-│       └── test_utils.py
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
