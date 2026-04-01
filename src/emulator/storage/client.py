@@ -5,11 +5,16 @@ from contextlib import suppress
 from typing import Optional, Tuple
 
 from ..servers_config import DB_ENDPOINT
-from ..transport import TcpEndpoint, recv_message, send_message, hex_from_bytes
+from ..transport_layer.transport import (
+    TcpEndpoint,
+    recv_message,
+    send_message,
+    hex_from_bytes,
+)
 
 
-class SocketDatabaseClient:
-    """Database client that talks to `SocketDatabaseServer` over TCP."""
+class DbClient:
+    """Database client that talks to `DbServer` over TCP."""
 
     def __init__(
         self,
@@ -110,29 +115,29 @@ class SocketDatabaseClient:
     def _request(self, payload: dict):
         # Pool mode (thread-safe reuse, keep-alive protocol per socket).
         if self._pool is not None:
-            sock = self._pool_acquire()
+            socket = self._pool_acquire()
             try:
-                send_message(sock, payload)
-                return recv_message(sock)
+                send_message(socket, payload)
+                return recv_message(socket)
             except Exception:
                 # Drop broken sockets so the pool can recreate later.
                 with suppress(Exception):
-                    sock.close()
+                    socket.close()
                 with self._pool_lock:
                     self._created = max(0, self._created - 1)
                 raise
             finally:
                 # If the socket is already closed, releasing is harmless.
-                if sock.fileno() != -1:
-                    self._pool_release(sock)
+                if socket.fileno() != -1:
+                    self._pool_release(socket)
 
-        sock = self._get_socket()
-        if sock is None:
+        socket = self._get_socket()
+        if socket is None:
             with self.endpoint.connect(timeout_sec=self.timeout_sec) as tmp:
                 send_message(tmp, payload)
                 return recv_message(tmp)
-        send_message(sock, payload)
-        return recv_message(sock)
+        send_message(socket, payload)
+        return recv_message(socket)
 
     def query(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
         resp = self._request({"op": "Query", "hash": hex_from_bytes(hash_bytes)})

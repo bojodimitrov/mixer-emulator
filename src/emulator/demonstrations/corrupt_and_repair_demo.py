@@ -17,16 +17,14 @@ internally and do not accept in-process service injection).
 
 from __future__ import annotations
 
-import importlib
 import random
 
-from ..microservice_server import MicroserviceServer
-from ..storage.engine import DbEngine
-from ..storage.db_server import DbServer
+from emulator.frontend.clients import Corrupter, Repairer
+from emulator.utils import print_time
 
-frontend_clients = importlib.import_module("emulator.frontend-clients")
-Corrupter = frontend_clients.Corrupter
-Repairer = frontend_clients.Repairer
+from ..microservice.server import MicroserviceServer
+from ..storage.engine import DbEngine
+from ..storage.server import DbServer
 
 
 def run_demo(*, seed: int | None = None) -> None:
@@ -60,15 +58,15 @@ def run_demo(*, seed: int | None = None) -> None:
         print(f"Record to be changed: id= {_id_read} name= {name} hash= {hash.hex()}")
         print()
 
-        corrupt_resp = corrupter.run_once(record_id=record_id)
-        print(f"corrupter response: {corrupt_resp}")
+        print_time("Corrupt call", lambda: corrupter.run_once(record_id=record_id))
 
         _id_read, name, hash = db.read_record(record_id)
         print(f"Record corrupted: id= {_id_read} name= {name} hash= {hash.hex()}")
         print()
 
-        repair_resp = repairer.run_once(record_id=record_id)
-        print(f"repairer response:  {repair_resp}")
+        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
+        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
+        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
 
         _id_read, name, hash = db.read_record(record_id)
         print(f"Record repaired: id= {_id_read} name= {name} hash= {hash.hex()}")

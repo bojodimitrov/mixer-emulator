@@ -3,10 +3,9 @@ from contextlib import contextmanager
 import mmap
 import os
 import struct
-import time
 from typing import Literal, Optional, Tuple
 
-from ..utils import compute_hash_for, id_to_name
+from ..utils import compute_hash_for, id_to_name, print_time
 from .constants import (
     RECORD_STRUCT,
     RECORD_SIZE,
@@ -390,14 +389,15 @@ def create_database(start: int = 0, end: int = 11_881_376) -> None:
     print(f"Ensuring capacity for {end} records...", flush=True)
     db.ensure_capacity(end)
     print(f"Populating records {start}..{end - 1}", flush=True)
-    start_time = time.perf_counter()
-    db.populate_range(
-        start,
-        end,
-        _print_progress,
+
+    print_time(
+        "Completed in ",
+        lambda: db.populate_range(
+            start,
+            end,
+            _print_progress,
+        ),
     )
-    elapsed = time.perf_counter() - start_time
-    print(f"Completed in {elapsed:.2f} seconds", flush=True)
 
 
 def main() -> None:

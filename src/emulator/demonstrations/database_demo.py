@@ -1,20 +1,18 @@
 import random
-import time
 from typing import Tuple
 
 from ..storage.engine import DbEngine
-from ..storage.server import DbRequest, DbOrchestrator
-from ..utils import compute_hash_for
+from ..storage.orchestrator import DbRequest, DbOrchestrator
+from ..utils import compute_hash_for, print_time
 
 
 def _measure_lookup(
     server: DbOrchestrator, strategy_name: str, hash_bytes: bytes
 ) -> None:
-    t0 = time.perf_counter()
-    result = server.handle_request(DbRequest("Query", {"hash_bytes": hash_bytes}))
-    t1 = time.perf_counter()
-    print(f"{strategy_name:>6} -> {result}")
-    print(f"{strategy_name:>6} lookup took {(t1 - t0) * 1000:.3f} ms")
+    print_time(
+        f"Lookup for {strategy_name}",
+        lambda: server.handle_request(DbRequest("Query", {"hash_bytes": hash_bytes})),
+    )
     print()
 
 
@@ -27,18 +25,17 @@ def create_servers() -> Tuple[DbOrchestrator, DbOrchestrator, DbOrchestrator]:
 
 
 def run_lookup_demo(
-    linear_db: DbEngine,
+    db_engine: DbEngine,
     linear_server: DbOrchestrator,
     sorted_server: DbOrchestrator,
     bplus_server: DbOrchestrator,
 ) -> None:
-    record_count = linear_db.record_count()
+    record_count = db_engine.record_count()
     record_id = random.randint(0, record_count - 1)
 
-    t0 = time.perf_counter()
-    id_read, name, hashb = linear_db.read_record(record_id)
-    t1 = time.perf_counter()
-    print(f"Read record {record_id} in {(t1 - t0) * 1000:.3f} ms")
+    id_read, name, hashb = print_time(
+        "Read record", lambda: db_engine.read_record(record_id)
+    )
     print(f"id={id_read} name={name} hash={hashb.hex()}")
 
     _measure_lookup(linear_server, "linear", hashb)
@@ -53,13 +50,12 @@ def run_update_demo(linear_db: DbEngine, bplus_server: DbOrchestrator) -> None:
     _, old_update_name, old_update_hash = linear_db.read_record(update_id)
     updated_name = "zzzzz" if old_update_name != "zzzzz" else "yyyyy"
 
-    t0 = time.perf_counter()
-    updated = bplus_server.handle_request(
-        DbRequest("Command", {"id": update_id, "new_name": updated_name})
+    print_time(
+        f"B+ update",
+        lambda: bplus_server.handle_request(
+            DbRequest("Command", {"id": update_id, "new_name": updated_name})
+        ),
     )
-    t1 = time.perf_counter()
-    print(f"bplus update id={update_id} -> {updated}")
-    print(f"bplus update took {(t1 - t0) * 1000:.3f} ms")
 
     updated_result = bplus_server.handle_request(
         DbRequest(
@@ -81,11 +77,10 @@ def run_database_demo() -> None:
     record_count = linear_db.record_count()
     record_id = random.randint(0, record_count - 1)
 
-    t0 = time.perf_counter()
-    id_read, name, hashb = linear_db.read_record(record_id)
-    t1 = time.perf_counter()
-    print(f"Read record {record_id} in {(t1 - t0) * 1000:.3f} ms")
-    print(f"id={id_read} name={name} hash={hashb.hex()}")
+    _, _, hashb = print_time(
+        f"Read record {record_id}",
+        lambda: linear_db.read_record(record_id),
+    )
 
     _measure_lookup(bplus_server, "bplus", hashb)
     _measure_lookup(bplus_server, "bplus", hashb)

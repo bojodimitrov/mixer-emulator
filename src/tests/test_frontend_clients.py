@@ -2,14 +2,11 @@ import unittest
 
 import importlib
 
-from emulator.microservice_server import MicroserviceServer
+from emulator.frontend.clients import Corrupter, Repairer
+from emulator.microservice.server import MicroserviceServer
 from emulator.storage.engine import DbEngine
-from emulator.storage.db_server import DbServer
+from emulator.storage.server import DbServer
 from tests.test_db_utils import create_seeded_temp_db
-
-frontend_clients = importlib.import_module("emulator.frontend-clients")
-Corrupter = frontend_clients.Corrupter
-Repairer = frontend_clients.Repairer
 
 
 class _SocketHarness:

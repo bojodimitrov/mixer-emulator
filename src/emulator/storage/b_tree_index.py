@@ -5,8 +5,9 @@ import mmap
 import os
 import struct
 import tempfile
-import time
 from typing import Iterator, List, Optional, Tuple
+
+from emulator.utils import print_time
 
 from .constants import (
     DB_RECORD_SIZE,
@@ -750,11 +751,8 @@ def build_bplus_tree(
     db_path: Optional[str] = None,
     out_path: Optional[str] = None,
 ) -> None:
-    start_time = time.perf_counter()
     builder = BPlusTreeBuilder(db_path=db_path, out_path=out_path)
-    builder.build()
-    elapsed = time.perf_counter() - start_time
-    print(f"B+ tree build completed in {elapsed:.2f} seconds", flush=True)
+    print_time("B+ tree build completed in ", lambda: builder.build())
 
 
 def main() -> None:

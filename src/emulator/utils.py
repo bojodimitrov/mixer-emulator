@@ -1,4 +1,9 @@
 import hashlib
+import time
+from typing import Callable, TypeVar
+
+
+T = TypeVar("T")
 
 
 def id_to_name(idx: int) -> bytes:
@@ -13,3 +18,11 @@ def id_to_name(idx: int) -> bytes:
 def compute_hash_for(id_: int, name: bytes) -> bytes:
     s = f"{id_}:{name.decode('ascii')}".encode("utf-8")
     return hashlib.sha256(s).digest()
+
+
+def print_time(message: str, operation: Callable[[], T]) -> T:
+    start = time.perf_counter()
+    result = operation()
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    print(f"({elapsed_ms:.3f} ms) ==> {message} -> {result} ")
+    return result

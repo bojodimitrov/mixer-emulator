@@ -2,10 +2,14 @@ import socket
 import threading
 from typing import Any, Dict, Optional
 
-from .servers_config import DB_ENDPOINT, DEFAULT_SERVICE_ENDPOINT
-from .microservice import Microservice, Request
-from .transport import recv_message, send_message, bytes_from_hex, hex_from_bytes
-from .storage.db_client import SocketDatabaseClient
+from ..servers_config import SERVICE_ENDPOINT
+from .framework import Microservice, Request
+from ..transport_layer.transport import (
+    recv_message,
+    send_message,
+    bytes_from_hex,
+)
+from ..storage.client import DbClient
 
 
 class MicroserviceServer:
@@ -25,9 +29,9 @@ class MicroserviceServer:
         latency_ms: int = 50,
         pool_size: int = 200,
     ):
-        self.host = str(DEFAULT_SERVICE_ENDPOINT.host)
-        self.port = int(DEFAULT_SERVICE_ENDPOINT.port)
-        self._db_client = SocketDatabaseClient()
+        self.host = str(SERVICE_ENDPOINT.host)
+        self.port = int(SERVICE_ENDPOINT.port)
+        self._db_client = DbClient()
         self._service = Microservice(
             db_client=self._db_client,
             latency_ms=latency_ms,
@@ -96,33 +100,14 @@ class MicroserviceServer:
         method = (msg.get("method") or "").upper()
         data = msg.get("data")
 
-        if data is None:
-            # Backwards compatibility: allow flat payloads.
-            data = msg
         if not isinstance(data, dict):
             raise ValueError("request 'data' must be an object")
-
-        if method == "GET":
-            hash_hex = data.get("hash")
-            if not isinstance(hash_hex, str):
-                raise ValueError("GET requires 'hash' hex string")
-            payload = {"hash": bytes_from_hex(hash_hex)}
-
-        elif method == "POST":
-            id_ = data.get("id")
-            new_name = data.get("new_name")
-            if not isinstance(id_, int) or not isinstance(new_name, str):
-                raise ValueError("POST requires 'id' int and 'new_name' str")
-            payload = {"id": id_, "new_name": new_name}
-
-        else:
-            raise ValueError("unknown method")
 
         # Reuse existing Microservice queue/Request contract.
         import queue
 
         q: queue.Queue = queue.Queue()
-        self._service.process(Request(method, payload, q))
+        self._service.process(Request(method, data, q))
         result = q.get(timeout=10)
 
         # Normalize bytes in response (if any) to hex to keep JSON clean.
@@ -130,25 +115,5 @@ class MicroserviceServer:
             # (id, name)
             rid, name = result["result"]
             result["result"] = [rid, name]
+
         return result
-
-
-class MicroserviceClient:
-    """Frontend client for `SocketMicroserviceServer` over TCP."""
-
-    def __init__(
-        self,
-        timeout_sec: float = 5.0,
-    ):
-        from .transport import TcpEndpoint
-
-        self.endpoint = TcpEndpoint(
-            DEFAULT_SERVICE_ENDPOINT.host, int(DEFAULT_SERVICE_ENDPOINT.port)
-        )
-        self.timeout_sec = float(timeout_sec)
-
-    def request(self, method: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a request to the microservice."""
-        with self.endpoint.connect(timeout_sec=self.timeout_sec) as sock:
-            send_message(sock, {"method": str(method).upper(), "data": data})
-            return recv_message(sock)

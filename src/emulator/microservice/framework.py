@@ -2,24 +2,13 @@ import random
 import time
 import queue
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict
-
-from .storage.server import DbRequest
+from typing import Dict
 
 
 class Request:
     def __init__(self, method: str, payload: Dict, reply_q: queue.Queue):
         self.method = method.upper()
-        if self.method == "GET":
-            if "hash" not in payload:
-                raise ValueError("GET payload must include 'hash'")
-            self.payload = {"hash": payload["hash"]}
-        elif self.method == "POST":
-            if "id" not in payload or "new_name" not in payload:
-                raise ValueError("POST payload must include 'id' and 'new_name'")
-            self.payload = {"id": payload["id"], "new_name": payload["new_name"]}
-        else:
-            raise ValueError("method must be GET or POST")
+        self.payload = payload
         self.reply_q = reply_q
 
 
@@ -71,12 +60,12 @@ class Microservice:
         except Exception as exc:
             req.reply_q.put({"status": "error", "error": str(exc)})
 
-    def process(self, req: Request):
+    def process(self, request: Request):
         if self._is_shutdown:
-            req.reply_q.put({"status": "error", "error": "service is shut down"})
+            request.reply_q.put({"status": "error", "error": "service is shut down"})
             return
 
-        self._executor.submit(self._process_request, req)
+        self._executor.submit(self._process_request, request)
 
     def stop(self):
         self._is_shutdown = True

@@ -20,13 +20,11 @@ Run:
 from __future__ import annotations
 
 import random
-import time
 
 from ..storage.engine import DbEngine
-from ..storage.db_client import SocketDatabaseClient
-from ..storage.db_server import DbServer
-from ..servers_config import DB_ENDPOINT
-from ..utils import compute_hash_for
+from ..storage.client import DbClient
+from ..storage.server import DbServer
+from ..utils import print_time
 
 
 def run_socket_bplus_demo() -> None:
@@ -45,40 +43,14 @@ def run_socket_bplus_demo() -> None:
     server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
     server.start()
     try:
-        # Use pooling (thread-safe) instead of keepalive.
-        # The client will eagerly create half of pool_size connections on init.
-        client = SocketDatabaseClient(pool_size=20)
+        client = DbClient(pool_size=20)
 
         print("== B+ tree socket demo ==")
         print(f"record_id= {record_id} name= {old_name} hash= {old_hash.hex()}")
 
-        t0 = time.perf_counter()
-        q1 = client.query(old_hash)
-        t1 = time.perf_counter()
-        print(f"Query(hash) -> {q1} ({(t1 - t0) * 1000:.3f} ms)")
+        for _ in range(3):
+            print_time("Query", lambda: client.query(old_hash))
 
-        t0 = time.perf_counter()
-        q1 = client.query(old_hash)
-        t1 = time.perf_counter()
-        print(f"Query(hash) -> {q1} ({(t1 - t0) * 1000:.3f} ms)")
-
-        t0 = time.perf_counter()
-        q1 = client.query(old_hash)
-        t1 = time.perf_counter()
-        print(f"Query(hash) -> {q1} ({(t1 - t0) * 1000:.3f} ms)")
-
-        # new_name = "zzzzz" if old_name != "zzzzz" else "yyyyy"
-        # t0 = time.perf_counter()
-        # ok = client.command(record_id, new_name)
-        # t1 = time.perf_counter()
-        # print(f"Command(update_name={new_name}) -> {ok} ({(t1 - t0) * 1000:.3f} ms)")
-
-        # new_hash = compute_hash_for(record_id, new_name.encode("ascii"))
-
-        # q_old = client.query(old_hash)
-        # q_new = client.query(new_hash)
-        # print(f"Query(old_hash) after update -> {q_old}")
-        # print(f"Query(new_hash) after update -> {q_new}")
     finally:
         client.close()
         server.close()

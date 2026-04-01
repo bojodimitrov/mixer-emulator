@@ -25,4 +25,4 @@ class ServiceEndpoint:
 
 
 DB_ENDPOINT = DbEndpoint()
-DEFAULT_SERVICE_ENDPOINT = ServiceEndpoint()
+SERVICE_ENDPOINT = ServiceEndpoint()

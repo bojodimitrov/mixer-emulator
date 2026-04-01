@@ -4,8 +4,9 @@ import mmap
 import os
 import struct
 import tempfile
-import time
 from typing import Iterator, List, Optional, Tuple
+
+from emulator.utils import print_time
 
 from .constants import (
     DB_RECORD_SIZE,
@@ -290,11 +291,8 @@ class HashIndex:
 
 
 def build_index(chunk_size: int = 200_000) -> None:
-    start_time = time.perf_counter()
     builder = IndexBuilder(chunk_size=chunk_size)
-    builder.build()
-    elapsed = time.perf_counter() - start_time
-    print(f"Index build completed in {elapsed:.2f} seconds", flush=True)
+    print_time("Index build completed in ", lambda: builder.build())
 
 
 def main() -> None:

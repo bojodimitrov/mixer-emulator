@@ -3,9 +3,9 @@ import string
 import time
 from typing import Any, Dict, Optional
 
-from .microservice_server import MicroserviceClient
-from .transport import hex_from_bytes
-from .utils import compute_hash_for, id_to_name
+from emulator.microservice.client import MicroserviceClient
+from emulator.transport_layer.transport import hex_from_bytes
+from emulator.utils import compute_hash_for, id_to_name
 
 _MAX_DB_ID = 11_881_375  # 26^5 - 1, last valid record id
 
@@ -125,6 +125,7 @@ class Repairer:
     ) -> None:
         if seed is not None:
             random.seed(int(seed))
+
         try:
             while True:
                 self.run_once(record_id=record_id)

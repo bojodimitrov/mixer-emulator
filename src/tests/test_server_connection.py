@@ -4,13 +4,12 @@ import time
 import unittest
 from unittest.mock import patch
 
+from emulator.microservice.client import MicroserviceClient
 import emulator.storage.engine as database_module
-from emulator.storage.db_server import DbServer
-from emulator.microservice_server import (
-    MicroserviceClient,
+from emulator.storage.server import DbServer
+from emulator.microservice.server import (
     MicroserviceServer,
 )
-from emulator.servers_config import DbEndpoint, ServiceEndpoint
 from emulator.utils import compute_hash_for, id_to_name
 
 
@@ -52,7 +51,7 @@ class TestSocketDecoupling(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_query_and_update_over_sockets(self):
-        from emulator.transport import hex_from_bytes
+        from emulator.transport_layer.transport import hex_from_bytes
 
         client = MicroserviceClient()
 

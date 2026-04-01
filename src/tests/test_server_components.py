@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import patch
 
 import emulator.storage.engine as database_module
-from emulator.storage.db_client import SocketDatabaseClient
-from emulator.storage.db_server import DbServer
-from emulator.microservice_server import MicroserviceServer
+from emulator.storage.client import DbClient
+from emulator.storage.server import DbServer
+from emulator.microservice.server import MicroserviceServer
 from emulator.servers_config import DB_ENDPOINT
 
 
@@ -45,7 +45,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_query_and_command_roundtrip(self):
-        client = SocketDatabaseClient()
+        client = DbClient()
 
         # Use poor-man's blackbox: query for a known record by computing the same
         # hash the DB uses.
@@ -66,7 +66,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.assertIsNone(resp2)
 
     def test_keepalive_close_is_graceful(self):
-        client = SocketDatabaseClient(
+        client = DbClient(
             keepalive=True,
         )
         self.addCleanup(client.close)
@@ -81,7 +81,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.assertIsNotNone(client.query(h))
 
     def test_connection_pool_reuses_sockets(self):
-        client = SocketDatabaseClient(
+        client = DbClient(
             pool_size=2,
         )
         self.addCleanup(client.close)
@@ -99,7 +99,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
             self.assertIsNotNone(client.query(h))
 
     def test_connection_pool_is_thread_safe(self):
-        client = SocketDatabaseClient(
+        client = DbClient(
             pool_size=4,
         )
         self.addCleanup(client.close)
@@ -132,7 +132,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_connection_pool_eagerly_creates_half_on_init(self):
-        client = SocketDatabaseClient(
+        client = DbClient(
             pool_size=6,
         )
         self.addCleanup(client.close)
@@ -189,7 +189,11 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
 
     def test_server_rejects_invalid_request(self):
         # Send a raw message with invalid method through the transport layer.
-        from emulator.transport import TcpEndpoint, send_message, recv_message
+        from emulator.transport_layer.transport import (
+            TcpEndpoint,
+            send_message,
+            recv_message,
+        )
 
         ep = TcpEndpoint(DB_ENDPOINT.host, DB_ENDPOINT.port)
         with ep.connect(timeout_sec=1.0) as sock:

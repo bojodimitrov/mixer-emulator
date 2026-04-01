@@ -13,14 +13,14 @@ To avoid that, we provide lazy attribute access for the public symbols.
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .server import DbRequest, DbOrchestrator, LookupStrategy
+    from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
 
 __all__ = ["DbRequest", "DbOrchestrator", "LookupStrategy"]
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover
     if name in __all__:
-        from .server import DbRequest, DbOrchestrator, LookupStrategy
+        from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
 
         return {
             "DatabaseRequest": DbRequest,

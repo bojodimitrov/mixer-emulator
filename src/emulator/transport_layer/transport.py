@@ -14,11 +14,13 @@ class ProtocolError(RuntimeError):
 
 def _recvall(socket: socket.socket, n: int) -> bytes:
     data = bytearray()
+
     while len(data) < n:
         chunk = socket.recv(n - len(data))
         if not chunk:
             raise ConnectionError("socket closed while reading")
         data.extend(chunk)
+
     return bytes(data)
 
 
@@ -27,14 +29,19 @@ def send_message(socket: socket.socket, message: Dict[str, Any]) -> None:
     socket.sendall(_LEN_STRUCT.pack(len(payload)) + payload)
 
 
-def recv_message(socket: socket.socket, *, max_bytes: int = 10 * 1024 * 1024) -> Dict[str, Any]:
+def recv_message(
+    socket: socket.socket, *, max_bytes: int = 10 * 1024 * 1024
+) -> Dict[str, Any]:
     header = _recvall(socket, _LEN_STRUCT.size)
     (length,) = _LEN_STRUCT.unpack(header)
+
     if length <= 0:
         raise ProtocolError("invalid message length")
     if length > max_bytes:
         raise ProtocolError(f"message too large: {length} bytes")
+
     payload = _recvall(socket, length)
+
     try:
         obj = json.loads(payload.decode("utf-8"))
     except Exception as exc:
