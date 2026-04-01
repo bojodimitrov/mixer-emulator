@@ -1,7 +1,7 @@
 """Demo: Gets by different record IDs to compare speed.
 
 Run:
-  python -m emulator.demonstrations.gets_demo
+  python -m emulator.demonstrations.array_demo
 
 This starts:
   - DbServer
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import random
 
-from emulator.frontend.clients import Repairer
+from emulator.frontend.clients import Corrupter, Repairer
 from emulator.utils import print_time
 
 from ..microservice.server import MicroserviceServer
@@ -31,8 +31,8 @@ def run_demo(*, seed: int | None = None) -> None:
         print("No records found; skipping GET demo.")
         return
 
-    sample_size = min(10, total_records)
-    record_ids = random.sample(range(total_records), k=sample_size)
+    calls_count = 10
+    record_ids = [random.randrange(total_records) for _ in range(calls_count)]
 
     db_server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS, conn_timeout_sec=30)
     db_server.start()
@@ -43,16 +43,34 @@ def run_demo(*, seed: int | None = None) -> None:
     svc_server.start()
 
     try:
-        print("== Get different records demo ==")
+        print("== B+TREE INDEX ==")
+        print("== Repair->Corrupt->Repair demo ==")
         print(f"service: 127.0.0.1:{svc_server.port}")
         print(f"db:      127.0.0.1:{db_server.port}")
         print(f"target ids ({len(record_ids)}): {record_ids}")
 
+        corrupter = Corrupter(timeout_sec=30)
         repairer = Repairer(timeout_sec=30)
 
+        print("-- Repair without corrupt data phase --")
         for rid in record_ids:
             print_time(
-                f"Get call id={rid}", lambda rid=rid: repairer.run_once(record_id=rid)
+                f"Repair call id={rid}",
+                lambda rid=rid: repairer.run_once(record_id=rid),
+            )
+
+        print("-- Corruption phase --")
+        for rid in record_ids:
+            print_time(
+                f"Corrupt call id={rid}",
+                lambda rid=rid: corrupter.run_once(record_id=rid),
+            )
+
+        print("-- Repair with corrupt data phase --")
+        for rid in record_ids:
+            print_time(
+                f"Repair call id={rid}",
+                lambda rid=rid: repairer.run_once(record_id=rid),
             )
 
     finally:

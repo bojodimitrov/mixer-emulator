@@ -253,6 +253,16 @@ Current test coverage includes:
 
 The suite currently includes server, client, transport, and storage tests.
 
+## Benchmark Snapshot (Corrupt Then Repair Demo)
+
+Latest run shape: `Repair (clean) -> Corrupt -> Repair (corrupted)`, 10 IDs per phase.
+
+| Strategy               | Avg repair clean (ms) | Avg corrupt (ms) | Avg repair corrupted (ms) |
+| ---------------------- | --------------------: | ---------------: | ------------------------: |
+| No index (linear scan) |                800.82 |             7.33 |                   2719.60 |
+| Sorted index           |                  5.97 |           929.77 |                   1104.98 |
+| B+ tree                |                 18.91 |            38.38 |                     23.38 |
+
 ## File Formats
 
 ### Database File (.db)
