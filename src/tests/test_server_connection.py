@@ -59,25 +59,36 @@ class TestSocketDecoupling(unittest.TestCase):
         name_b = id_to_name(record_id)
         h = compute_hash_for(record_id, name_b)
 
-        resp = client.request("GET", {"hash": hex_from_bytes(h)})
+        resp = client.request("GET", {"hash": hex_from_bytes(h)}, "/")
         self.assertEqual(resp["status"], "ok")
         self.assertEqual(resp["result"], [record_id, name_b.decode("ascii")])
 
-        resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"})
+        resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"}, "/")
         self.assertEqual(resp2["status"], "ok")
         self.assertTrue(resp2["result"])
 
         # old hash should no longer match
-        resp3 = client.request("GET", {"hash": hex_from_bytes(h)})
+        resp3 = client.request("GET", {"hash": hex_from_bytes(h)}, "/")
         self.assertEqual(resp3["status"], "ok")
         self.assertIsNone(resp3["result"])
 
     def test_unsupported_method_returns_error(self):
         client = MicroserviceClient()
 
-        resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"})
+        resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"}, "/")
         self.assertEqual(resp.get("status"), "error")
         self.assertIn("unsupported method", str(resp.get("error", "")).lower())
+
+    def test_unknown_path_returns_error(self):
+        from emulator.transport_layer.transport import hex_from_bytes
+
+        client = MicroserviceClient()
+        record_id = 7
+        h = compute_hash_for(record_id, id_to_name(record_id))
+
+        resp = client.request("GET", {"hash": hex_from_bytes(h)}, path="/unknown")
+        self.assertEqual(resp.get("status"), "error")
+        self.assertIn("unsupported route", str(resp.get("error", "")).lower())
 
 
 if __name__ == "__main__":

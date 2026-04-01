@@ -55,21 +55,23 @@ def run_demo(*, seed: int | None = None) -> None:
         repairer = Repairer()
 
         _id_read, name, hash = db.read_record(record_id)
-        print(f"Record to be changed: id= {_id_read} name= {name} hash= {hash.hex()}")
+        print(f"Record to be changed: id= {_id_read} name= {name} hash= {hash}")
         print()
 
         print_time("Corrupt call", lambda: corrupter.run_once(record_id=record_id))
 
         _id_read, name, hash = db.read_record(record_id)
-        print(f"Record corrupted: id= {_id_read} name= {name} hash= {hash.hex()}")
+        print(f"Record corrupted: id= {_id_read} name= {name} hash= {hash}")
         print()
 
         print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
         print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
         print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
+        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
+        print_time("Repair call", lambda: repairer.run_once(record_id=record_id))
 
         _id_read, name, hash = db.read_record(record_id)
-        print(f"Record repaired: id= {_id_read} name= {name} hash= {hash.hex()}")
+        print(f"Record repaired: id= {_id_read} name= {name} hash= {hash}")
 
     finally:
         svc_server.close()

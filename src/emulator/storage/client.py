@@ -139,8 +139,8 @@ class DbClient:
         send_message(socket, payload)
         return recv_message(socket)
 
-    def query(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
-        resp = self._request({"op": "Query", "hash": hex_from_bytes(hash_bytes)})
+    def query(self, hash: str) -> Optional[Tuple[int, str]]:
+        resp = self._request({"op": "Query", "hash": hash})
         if resp.get("status") != "ok":
             raise RuntimeError(resp.get("error") or "db error")
         return resp.get("result")

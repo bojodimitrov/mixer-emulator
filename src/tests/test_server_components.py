@@ -55,7 +55,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
         record_id = 7
         name_b = id_to_name(record_id)
-        h = compute_hash_for(record_id, name_b)
+        h = compute_hash_for(record_id, name_b).hex()
 
         resp = client.query(h)
         self.assertEqual(resp, [record_id, name_b.decode("ascii")])
@@ -77,7 +77,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
         record_id = 1
         name_b = id_to_name(record_id)
-        h = compute_hash_for(record_id, name_b)
+        h = compute_hash_for(record_id, name_b).hex()
 
         # Two requests on same TCP connection.
         self.assertIsNotNone(client.query(h))
@@ -92,7 +92,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
         record_id = 2
         name_b = id_to_name(record_id)
-        h = compute_hash_for(record_id, name_b)
+        h = compute_hash_for(record_id, name_b).hex()
 
         # Multiple requests should work without creating a new TCP connection each time.
         # We can't easily assert connection count without server instrumentation,
@@ -110,7 +110,7 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
         record_id = 3
         name_b = id_to_name(record_id)
-        h = compute_hash_for(record_id, name_b)
+        h = compute_hash_for(record_id, name_b).hex()
 
         import threading
 

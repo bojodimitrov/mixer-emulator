@@ -3,7 +3,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from ..servers_config import SERVICE_ENDPOINT
-from .framework import Microservice, Request
+from .framework import CustomApi, Microservice, Request
 from ..transport_layer.transport import (
     recv_message,
     send_message,
@@ -14,9 +14,9 @@ from ..storage.client import DbClient
 class MicroserviceServer:
     """TCP server that exposes the existing `Microservice` API.
 
-        Protocol (request):
-            {"method": "GET", "data": {"hash": "<hex>"}}
-            {"method": "POST", "data": {"id": <int>, "new_name": "abcde"}}
+    Protocol (request):
+        {"method": "GET", "path": "/", "data": {"hash": "<hex>"}}
+        {"method": "POST", "path": "/", "data": {"id": <int>, "new_name": "abcde"}}
 
     Protocol (response):
       {"status": "ok", "result": ...}
@@ -30,9 +30,7 @@ class MicroserviceServer:
     ):
         self.host = str(SERVICE_ENDPOINT.host)
         self.port = int(SERVICE_ENDPOINT.port)
-        self._db_client = DbClient()
         self._service = Microservice(
-            db_client=self._db_client,
             latency_ms=latency_ms,
             pool_size=pool_size,
         )
@@ -97,6 +95,7 @@ class MicroserviceServer:
 
     def _handle_message(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         method = (msg.get("method") or "").upper()
+        path = msg.get("path") or "/"
         data = msg.get("data")
 
         if not isinstance(data, dict):
@@ -106,7 +105,7 @@ class MicroserviceServer:
         import queue
 
         q: queue.Queue = queue.Queue()
-        self._service.process(Request(method, data, q))
+        self._service.process(Request(method, data, path, q))
         result = q.get(timeout=10)
 
         # Normalize bytes in response (if any) to hex to keep JSON clean.

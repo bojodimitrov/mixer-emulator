@@ -24,8 +24,8 @@ def _database_worker(
                 "database is empty; build it first with `python -m emulator.storage.database`"
             )
 
-        hash_bytes = request.payload["hash_bytes"]
-        return db.query_by_hash(hash_bytes)
+        hash_hex = request.payload["hash"]
+        return db.query_by_hash(hash_hex)
 
     if request.operation == "Command":
         id_ = request.payload["id"]

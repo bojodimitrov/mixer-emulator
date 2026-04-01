@@ -3,7 +3,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
-from ..transport_layer.transport import recv_message, send_message, bytes_from_hex
+from ..transport_layer.transport import recv_message, send_message
 from ..servers_config import DB_ENDPOINT
 from .engine import DbEngine
 from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
@@ -139,8 +139,9 @@ class DbServer:
             hash_hex = req.get("hash")
             if not isinstance(hash_hex, str):
                 raise ValueError("Query requires 'hash' hex string")
+
             result = self._db_server.handle_request(
-                DbRequest("Query", {"hash_bytes": bytes_from_hex(hash_hex)})
+                DbRequest("Query", {"hash": hash_hex})
             )
             return {"status": "ok", "result": result}
 

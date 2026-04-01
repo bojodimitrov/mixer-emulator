@@ -36,3 +36,10 @@ def print_time(message: str, operation: Callable[[], T]) -> T:
         print(f"{message} completed in ({elapsed:.3f} {measurement}) -> {result} ")
 
     return result
+
+
+def to_hash_bytes(hash_value: str) -> bytes:
+    if isinstance(hash_value, (bytes, bytearray)):
+        return bytes(hash_value)
+    if isinstance(hash_value, str):
+        return bytes.fromhex(hash_value)

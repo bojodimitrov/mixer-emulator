@@ -46,7 +46,7 @@ def run_socket_bplus_demo() -> None:
         client = DbClient(pool_size=20)
 
         print("== B+ tree socket demo ==")
-        print(f"record_id= {record_id} name= {old_name} hash= {old_hash.hex()}")
+        print(f"record_id= {record_id} name= {old_name} hash= {old_hash}")
 
         for _ in range(3):
             print_time("Query", lambda: client.query(old_hash))

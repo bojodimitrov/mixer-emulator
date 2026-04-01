@@ -32,23 +32,23 @@ class TestFileDB(unittest.TestCase):
     def test_read_record_returns_expected_row(self):
         record_id = 7
 
-        id_read, name, hash_bytes = self.db.read_record(record_id)
+        id_read, name, hash = self.db.read_record(record_id)
 
         self.assertEqual(id_read, record_id)
         self.assertEqual(name, "aaaah")
-        self.assertEqual(hash_bytes, compute_hash_for(record_id, name.encode("ascii")))
+        self.assertEqual(hash, compute_hash_for(record_id, name.encode("ascii")).hex())
 
     def test_query_by_hash_returns_matching_record(self):
         record_id = 19
-        _, expected_name, hash_bytes = self.db.read_record(record_id)
-        result = self.db.query_by_hash(hash_bytes)
+        _, expected_name, hash_hex = self.db.read_record(record_id)
+        result = self.db.query_by_hash(hash_hex)
 
         self.assertEqual(result, (record_id, expected_name))
 
     def test_query_by_hash_returns_none_for_unknown_hash(self):
         missing_hash = b"\x00" * 32
 
-        self.assertIsNone(self.db.query_by_hash(missing_hash))
+        self.assertIsNone(self.db.query_by_hash(missing_hash.hex()))
 
     def test_multiple_connections_can_read_concurrently(self):
         exceptions = []
@@ -58,8 +58,8 @@ class TestFileDB(unittest.TestCase):
             local_db = database_module.DbEngine()
             try:
                 start_event.wait(timeout=2)
-                id_read, name, hash_bytes = local_db.read_record(record_id)
-                result = local_db.query_by_hash(hash_bytes)
+                id_read, name, hash_hex = local_db.read_record(record_id)
+                result = local_db.query_by_hash(hash_hex)
                 self.assertEqual(id_read, record_id)
                 self.assertEqual(result, (record_id, name))
             except Exception as exc:

@@ -16,8 +16,20 @@ class MicroserviceClient:
         self.endpoint = TcpEndpoint(SERVICE_ENDPOINT.host, int(SERVICE_ENDPOINT.port))
         self.timeout_sec = float(timeout_sec)
 
-    def request(self, method: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def request(
+        self,
+        method: str,
+        data: Dict[str, Any],
+        path: str,
+    ) -> Dict[str, Any]:
         """Send a request to the microservice."""
         with self.endpoint.connect(timeout_sec=self.timeout_sec) as sock:
-            send_message(sock, {"method": str(method).upper(), "data": data})
+            send_message(
+                sock,
+                {
+                    "method": str(method).upper(),
+                    "path": path,
+                    "data": data,
+                },
+            )
             return recv_message(sock)

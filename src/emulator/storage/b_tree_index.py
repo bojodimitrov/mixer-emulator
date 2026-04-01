@@ -201,8 +201,9 @@ class BPlusTreeIndex:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
-    def query_by_hash(self, hash_bytes: bytes) -> Optional[int]:
+    def query_by_hash(self, hash: str) -> Optional[int]:
         page_number = self.root_page
+        hash_bytes = bytes.fromhex(hash)
 
         while True:
             node_type = self._read_node_type(page_number)

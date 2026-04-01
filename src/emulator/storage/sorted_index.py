@@ -141,7 +141,9 @@ class HashIndex:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
-    def query_by_hash(self, hash_bytes: bytes) -> Optional[int]:
+    def query_by_hash(self, hash: str) -> Optional[int]:
+        hash_bytes = bytes.fromhex(hash)
+
         self._ensure_hash_size(hash_bytes)
         if self._count == 0 or self._mm is None:
             return None

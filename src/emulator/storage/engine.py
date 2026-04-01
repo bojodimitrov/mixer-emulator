@@ -5,6 +5,8 @@ import os
 import struct
 from typing import Literal, Optional, Tuple
 
+from emulator.transport_layer.transport import hex_from_bytes
+
 from ..utils import compute_hash_for, id_to_name, print_time
 from .constants import (
     RECORD_STRUCT,
@@ -150,7 +152,7 @@ class DbEngine:
                 finally:
                     mm.close()
 
-    def read_record(self, id_: int) -> Tuple[int, str, bytes]:
+    def read_record(self, id_: int) -> Tuple[int, str, str]:
         with self._read_lock():
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
@@ -161,14 +163,14 @@ class DbEngine:
                 data = f.read(RECORD_SIZE)
 
         id_read, name_b, hashb = struct.unpack(RECORD_STRUCT, data)
-        return id_read, name_b.decode("ascii"), hashb
+        return id_read, name_b.decode("ascii"), hex_from_bytes(hashb)
 
-    def query_by_hash(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
+    def query_by_hash(self, hash: str) -> Optional[Tuple[int, str]]:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
-            return self._query_by_hash_linear(hash_bytes)
+            return self._query_by_hash_linear(hash)
         if self.lookup_strategy == self.STRATEGY_SORTED:
-            return self._query_by_hash_sorted(hash_bytes)
-        return self._query_by_hash_bplus(hash_bytes)
+            return self._query_by_hash_sorted(hash)
+        return self._query_by_hash_bplus(hash)
 
     def update_record(self, id_: int, new_name_str: str) -> bool:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
@@ -177,7 +179,9 @@ class DbEngine:
             return self._update_record_sorted(id_, new_name_str)
         return self._update_record_bplus(id_, new_name_str)
 
-    def _query_by_hash_linear(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
+    def _query_by_hash_linear(self, hash: str) -> Optional[Tuple[int, str]]:
+        hash_bytes = bytes.fromhex(hash)
+
         with self._read_lock():
             file_size = os.path.getsize(DEFAULT_DB_PATH)
 
@@ -196,14 +200,14 @@ class DbEngine:
                 finally:
                     mm.close()
 
-    def _query_by_hash_sorted(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
+    def _query_by_hash_sorted(self, hash: str) -> Optional[Tuple[int, str]]:
         from .sorted_index import HashIndex
 
         if not os.path.exists(DEFAULT_INDEX_PATH):
             raise FileNotFoundError(f"index file not found: {DEFAULT_INDEX_PATH}")
 
         with HashIndex() as idx:
-            id_ = idx.query_by_hash(hash_bytes)
+            id_ = idx.query_by_hash(hash)
             if id_ is None:
                 return None
             try:
@@ -212,7 +216,7 @@ class DbEngine:
                 return None
             return id_read, name
 
-    def _query_by_hash_bplus(self, hash_bytes: bytes) -> Optional[Tuple[int, str]]:
+    def _query_by_hash_bplus(self, hash: str) -> Optional[Tuple[int, str]]:
         from .b_tree_index import BPlusTreeIndex
 
         if not os.path.exists(DEFAULT_BPLUS_INDEX_PATH):
@@ -221,7 +225,7 @@ class DbEngine:
             )
 
         with BPlusTreeIndex() as idx:
-            id_ = idx.query_by_hash(hash_bytes)
+            id_ = idx.query_by_hash(hash)
             if id_ is None:
                 return None
             try:

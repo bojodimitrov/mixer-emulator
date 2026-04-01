@@ -35,16 +35,16 @@ class TestSortedIndex(unittest.TestCase):
         sorted_index_module.build_index(chunk_size=32)
 
     def test_hash_index_query_returns_matching_id(self):
-        record_id, _, hash_bytes = self.db.read_record(63)
+        record_id, _, hash_hex = self.db.read_record(63)
 
         with sorted_index_module.HashIndex() as index:
-            self.assertEqual(index.query_by_hash(hash_bytes), record_id)
+            self.assertEqual(index.query_by_hash(hash_hex), record_id)
 
     def test_database_query_by_hash_index_returns_matching_record(self):
-        record_id, expected_name, hash_bytes = self.db.read_record(24)
+        record_id, expected_name, hash_hex = self.db.read_record(24)
 
         self.assertEqual(
-            self.db.query_by_hash(hash_bytes),
+            self.db.query_by_hash(hash_hex),
             (record_id, expected_name),
         )
 
@@ -62,18 +62,19 @@ class TestSortedIndex(unittest.TestCase):
 
     def test_hash_index_query_returns_none_for_unknown_hash(self):
         with sorted_index_module.HashIndex() as index:
-            self.assertIsNone(index.query_by_hash(b"\xff" * 32))
+            self.assertIsNone(index.query_by_hash((b"\xff" * 32).hex()))
 
     def test_hash_index_writable_insert_and_delete(self):
         inserted_hash = b"\x00" * 32
+        hex_hash = inserted_hash.hex()
         inserted_id = 999_999
 
         with sorted_index_module.HashIndex(writable=True) as index:
-            self.assertIsNone(index.query_by_hash(inserted_hash))
+            self.assertIsNone(index.query_by_hash(hex_hash))
             index.insert(inserted_hash, inserted_id)
 
         with sorted_index_module.HashIndex() as index:
-            self.assertEqual(index.query_by_hash(inserted_hash), inserted_id)
+            self.assertEqual(index.query_by_hash(hex_hash), inserted_id)
 
         entries = []
         with open(self.index_path, "rb") as index_file:
@@ -91,7 +92,7 @@ class TestSortedIndex(unittest.TestCase):
             self.assertFalse(index.delete(inserted_hash))
 
         with sorted_index_module.HashIndex() as index:
-            self.assertIsNone(index.query_by_hash(inserted_hash))
+            self.assertIsNone(index.query_by_hash(hex_hash))
 
     def test_database_update_record_dispatch_updates_sorted_index(self):
         record_id = 42

@@ -6,12 +6,10 @@ from ..storage.orchestrator import DbRequest, DbOrchestrator
 from ..utils import compute_hash_for, print_time
 
 
-def _measure_lookup(
-    server: DbOrchestrator, strategy_name: str, hash_bytes: bytes
-) -> None:
+def _measure_lookup(server: DbOrchestrator, strategy_name: str, hash_hex: str) -> None:
     print_time(
         f"Lookup for {strategy_name}",
-        lambda: server.handle_request(DbRequest("Query", {"hash_bytes": hash_bytes})),
+        lambda: server.handle_request(DbRequest("Query", {"hash": hash_hex})),
     )
     print()
 
@@ -33,14 +31,14 @@ def run_lookup_demo(
     record_count = db_engine.record_count()
     record_id = random.randint(0, record_count - 1)
 
-    id_read, name, hashb = print_time(
+    id_read, name, hash_hex = print_time(
         "Read record", lambda: db_engine.read_record(record_id)
     )
-    print(f"id={id_read} name={name} hash={hashb.hex()}")
+    print(f"id={id_read} name={name} hash={hash_hex}")
 
-    _measure_lookup(linear_server, "linear", hashb)
-    _measure_lookup(sorted_server, "sorted", hashb)
-    _measure_lookup(bplus_server, "bplus", hashb)
+    _measure_lookup(linear_server, "linear", hash_hex)
+    _measure_lookup(sorted_server, "sorted", hash_hex)
+    _measure_lookup(bplus_server, "bplus", hash_hex)
 
 
 def run_update_demo(linear_db: DbEngine, bplus_server: DbOrchestrator) -> None:
@@ -60,11 +58,11 @@ def run_update_demo(linear_db: DbEngine, bplus_server: DbOrchestrator) -> None:
     updated_result = bplus_server.handle_request(
         DbRequest(
             "Query",
-            {"hash_bytes": compute_hash_for(update_id, updated_name.encode("ascii"))},
+            {"hash": compute_hash_for(update_id, updated_name.encode("ascii")).hex()},
         )
     )
     old_result = bplus_server.handle_request(
-        DbRequest("Query", {"hash_bytes": old_update_hash})
+        DbRequest("Query", {"hash": old_update_hash})
     )
     print(f"bplus verify new hash -> {updated_result}")
     print(f"bplus verify old hash -> {old_result}")
@@ -77,14 +75,14 @@ def run_database_demo() -> None:
     record_count = linear_db.record_count()
     record_id = random.randint(0, record_count - 1)
 
-    _, _, hashb = print_time(
+    _, _, hash_hex = print_time(
         f"Read record {record_id}",
         lambda: linear_db.read_record(record_id),
     )
 
-    _measure_lookup(bplus_server, "bplus", hashb)
-    _measure_lookup(bplus_server, "bplus", hashb)
-    _measure_lookup(bplus_server, "bplus", hashb)
+    _measure_lookup(bplus_server, "bplus", hash_hex)
+    _measure_lookup(bplus_server, "bplus", hash_hex)
+    _measure_lookup(bplus_server, "bplus", hash_hex)
 
     # run_lookup_demo(linear_db, linear_server, sorted_server, bplus_server)
     # run_update_demo(linear_db, bplus_server)

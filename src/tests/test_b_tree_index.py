@@ -40,22 +40,22 @@ class TestBPlusTreeIndex(unittest.TestCase):
         btree_module.build_bplus_tree()
 
     def test_bplus_query_returns_matching_id(self):
-        record_id, _, hash_bytes = self.db.read_record(91)
+        record_id, _, hash = self.db.read_record(91)
 
         with btree_module.BPlusTreeIndex() as index:
-            self.assertEqual(index.query_by_hash(hash_bytes), record_id)
+            self.assertEqual(index.query_by_hash(hash), record_id)
 
     def test_database_query_by_hash_bplus_returns_matching_record(self):
-        record_id, expected_name, hash_bytes = self.db.read_record(17)
+        record_id, expected_name, hash_hex = self.db.read_record(17)
 
         self.assertEqual(
-            self.db.query_by_hash(hash_bytes),
+            self.db.query_by_hash(hash_hex),
             (record_id, expected_name),
         )
 
     def test_bplus_query_returns_none_for_missing_hash(self):
         with btree_module.BPlusTreeIndex() as index:
-            self.assertIsNone(index.query_by_hash(b"\xff" * 32))
+            self.assertIsNone(index.query_by_hash((b"\xff" * 32).hex()))
 
     def test_bplus_update_removes_old_hash_and_adds_new(self):
         """Test that B-tree update operation removes old hash and adds new."""
@@ -92,7 +92,7 @@ class TestBPlusTreeIndex(unittest.TestCase):
 
         # Query by new hash should return the record with new name
         result = self.db.query_by_hash(
-            compute_hash_for(record_id, new_name.encode("ascii"))
+            compute_hash_for(record_id, new_name.encode("ascii")).hex()
         )
         self.assertIsNotNone(result)
         if result is not None:
@@ -119,8 +119,8 @@ class TestBPlusTreeIndex(unittest.TestCase):
             self.assertEqual(index.query_by_hash(new_hash), record_id)
 
             for check_id in (0, 1, 2, 63, 64, 127):
-                expected_id, _, hash_bytes = self.db.read_record(check_id)
-                self.assertEqual(index.query_by_hash(hash_bytes), expected_id)
+                expected_id, _, hash_hex = self.db.read_record(check_id)
+                self.assertEqual(index.query_by_hash(hash_hex), expected_id)
 
     def test_bplus_direct_insert_and_delete_with_small_capacities(self):
         inserted_hash = b"\x00" * 32
@@ -132,23 +132,23 @@ class TestBPlusTreeIndex(unittest.TestCase):
             btree_module.build_bplus_tree()
 
             with btree_module.BPlusTreeIndex(writable=True) as index:
-                self.assertIsNone(index.query_by_hash(inserted_hash))
+                self.assertIsNone(index.query_by_hash(inserted_hash.hex()))
                 index.insert(inserted_hash, inserted_id)
 
             with btree_module.BPlusTreeIndex() as index:
-                self.assertEqual(index.query_by_hash(inserted_hash), inserted_id)
+                self.assertEqual(index.query_by_hash(inserted_hash.hex()), inserted_id)
                 for check_id in (0, 1, 2, 63, 64, 127):
-                    expected_id, _, hash_bytes = self.db.read_record(check_id)
-                    self.assertEqual(index.query_by_hash(hash_bytes), expected_id)
+                    expected_id, _, hash_hex = self.db.read_record(check_id)
+                    self.assertEqual(index.query_by_hash(hash_hex), expected_id)
 
             with btree_module.BPlusTreeIndex(writable=True) as index:
                 self.assertTrue(index.delete(inserted_hash))
 
             with btree_module.BPlusTreeIndex() as index:
-                self.assertIsNone(index.query_by_hash(inserted_hash))
+                self.assertIsNone(index.query_by_hash(inserted_hash.hex()))
                 for check_id in (0, 1, 2, 63, 64, 127):
-                    expected_id, _, hash_bytes = self.db.read_record(check_id)
-                    self.assertEqual(index.query_by_hash(hash_bytes), expected_id)
+                    expected_id, _, hash_hex = self.db.read_record(check_id)
+                    self.assertEqual(index.query_by_hash(hash_hex), expected_id)
 
     def test_bplus_update_rolls_back_on_non_runtime_error(self):
         record_id = 21
@@ -172,7 +172,7 @@ class TestBPlusTreeIndex(unittest.TestCase):
         # Index must still resolve old hash and not include the would-be new hash.
         with btree_module.BPlusTreeIndex() as index:
             self.assertEqual(index.query_by_hash(old_hash), record_id)
-            new_hash = compute_hash_for(record_id, b"zzzzz")
+            new_hash = compute_hash_for(record_id, b"zzzzz").hex()
             self.assertIsNone(index.query_by_hash(new_hash))
 
 
