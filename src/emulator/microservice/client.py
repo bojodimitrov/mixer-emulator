@@ -5,7 +5,7 @@ from emulator.transport_layer.transport import recv_message, send_message
 
 
 class MicroserviceClient:
-    """Frontend client for `SocketMicroserviceServer` over TCP."""
+    """Frontend client for `MicroserviceServer` over TCP."""
 
     def __init__(
         self,

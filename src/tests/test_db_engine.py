@@ -8,7 +8,7 @@ import emulator.storage.engine as database_module
 from emulator.utils import compute_hash_for
 
 
-class TestFileDB(unittest.TestCase):
+class TestDbEngine(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test.db")

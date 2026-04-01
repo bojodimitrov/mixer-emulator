@@ -4,24 +4,22 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from ..servers_config import SERVICE_ENDPOINT
-from .framework import CustomApi, Microservice, Request
+from .framework import Microservice, Request
 from ..transport_layer.transport import (
     recv_message,
     send_message,
 )
-from ..storage.client import DbClient
 
 
 class MicroserviceServer:
     """TCP server that exposes the existing `Microservice` API.
 
     Protocol (request):
-        {"method": "GET", "path": "/", "data": {"hash": "<hex>"}}
-        {"method": "POST", "path": "/", "data": {"id": <int>, "new_name": "abcde"}}
+        {"method": "GET/POST", "path": "/<endpoint_name>", "data": dictionary<str, object>
 
     Protocol (response):
-      {"status": "ok", "result": ...}
-      {"status": "error", "error": "..."}
+        {"status": "ok", "result": ...}
+        {"status": "error", "error": "..."}
     """
 
     def __init__(

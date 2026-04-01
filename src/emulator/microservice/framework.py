@@ -2,7 +2,7 @@ import random
 import time
 import queue
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Iterable, Tuple, Type
 
 from emulator.storage.client import DbClient
 

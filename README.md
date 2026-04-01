@@ -241,7 +241,7 @@ Caller thread
 Run tests:
 
 ```bash
-pytest src/tests
+python -m pytest
 ```
 
 Current test coverage includes:

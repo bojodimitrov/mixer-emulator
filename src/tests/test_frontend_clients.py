@@ -6,7 +6,7 @@ from emulator.frontend.clients import Corrupter, Repairer
 from emulator.microservice.server import MicroserviceServer
 from emulator.storage.engine import DbEngine
 from emulator.storage.server import DbServer
-from tests.test_db_utils import create_seeded_temp_db
+from tests.db_test_utils import create_seeded_temp_db
 
 
 class _SocketHarness:
