@@ -263,9 +263,9 @@ Latest run shape: `Repair (clean) -> Corrupt -> Repair (corrupted)`, 10 IDs per 
 | Sorted index           |                  5.97 |           929.77 |                   1104.98 |
 | B+ tree                |                 18.91 |            38.38 |                     23.38 |
 
-Repair clean will execute only reads
-Corrupt will execute only writes
-Repair corrupted will execute both reads and writes
+- `Repair clean` will execute only reads
+- `Corrupt will` execute only writes
+- `Repair corrupted` will execute both reads and writes
 
 ## File Formats
 
