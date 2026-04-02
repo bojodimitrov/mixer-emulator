@@ -18,7 +18,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-sec", type=float, default=None)
     parser.add_argument(
         "--lookup-strategy",
-        choices=["linear", "sorted", "bplus"],
+        choices=["linear", "bplus"],
         default="bplus",
     )
     return parser.parse_args()
@@ -27,7 +27,6 @@ def _parse_args() -> argparse.Namespace:
 def _lookup_strategy_from_arg(name: str) -> LookupStrategy:
     mapping: Dict[str, LookupStrategy] = {
         "linear": DbEngine.STRATEGY_LINEAR,
-        "sorted": DbEngine.STRATEGY_SORTED,
         "bplus": DbEngine.STRATEGY_BPLUS,
     }
     return mapping[name]

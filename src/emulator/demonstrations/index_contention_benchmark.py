@@ -1,12 +1,10 @@
 """Benchmark index contention during concurrent update writes.
 
 Run examples:
-    python -m emulator.demonstrations.index_contention_benchmark --strategy sorted
-    python -m emulator.demonstrations.index_contention_benchmark --strategy bplus
+    python -m emulator.demonstrations.index_contention_benchmark
 
 This measures update throughput when all updates target distinct rows.
-DB row writes can run concurrently, while index updates are serialized by the
-index lock. Comparing sorted vs bplus shows index-path bottlenecks.
+DB row writes can run concurrently while index updates contend on B+ tree paths.
 """
 
 import argparse
@@ -36,13 +34,7 @@ def _run_updates(db: DbEngine, ids: list[int], names: list[str], workers: int) -
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark concurrent update contention by index strategy"
-    )
-    parser.add_argument(
-        "--strategy",
-        choices=[DbEngine.STRATEGY_SORTED, DbEngine.STRATEGY_BPLUS],
-        default=DbEngine.STRATEGY_BPLUS,
-        help="Lookup strategy used for update dispatch",
+        description="Benchmark concurrent update contention for B+ index updates"
     )
     parser.add_argument(
         "--updates",
@@ -59,7 +51,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    db = DbEngine(lookup_strategy=args.strategy)
+    strategy = DbEngine.STRATEGY_BPLUS
+    db = DbEngine(lookup_strategy=strategy)
     count = db.record_count()
     if count == 0:
         print("Database is empty. Run python -m emulator.storage.database first.")
@@ -72,7 +65,7 @@ def main() -> None:
     originals = {id_: db.read_record(id_)[1] for id_ in ids}
     new_names = [_random_name(i) for i in range(updates)]
 
-    print(f"Strategy : {args.strategy}")
+    print(f"Strategy : {strategy}")
     print(f"Database : {count:,} records")
     print(f"Updates  : {updates} (distinct rows)")
     print()

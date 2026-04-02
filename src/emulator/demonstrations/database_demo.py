@@ -14,10 +14,9 @@ def _measure_lookup(server: DbOrchestrator, strategy_name: str, hash_hex: str) -
     print()
 
 
-def create_servers() -> Tuple[DbOrchestrator, DbOrchestrator, DbOrchestrator]:
+def create_servers() -> Tuple[DbOrchestrator, DbOrchestrator]:
     return (
         DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_LINEAR),
-        DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_SORTED),
         DbOrchestrator(lookup_strategy=DbEngine.STRATEGY_BPLUS),
     )
 
@@ -25,7 +24,6 @@ def create_servers() -> Tuple[DbOrchestrator, DbOrchestrator, DbOrchestrator]:
 def run_lookup_demo(
     db_engine: DbEngine,
     linear_server: DbOrchestrator,
-    sorted_server: DbOrchestrator,
     bplus_server: DbOrchestrator,
 ) -> None:
     record_count = db_engine.record_count()
@@ -37,7 +35,6 @@ def run_lookup_demo(
     print(f"id={id_read} name={name} hash={hash_hex}")
 
     _measure_lookup(linear_server, "linear", hash_hex)
-    _measure_lookup(sorted_server, "sorted", hash_hex)
     _measure_lookup(bplus_server, "bplus", hash_hex)
 
 
@@ -70,7 +67,7 @@ def run_update_demo(linear_db: DbEngine, bplus_server: DbOrchestrator) -> None:
 
 def run_database_demo() -> None:
     linear_db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
-    linear_server, sorted_server, bplus_server = create_servers()
+    linear_server, bplus_server = create_servers()
 
     record_count = linear_db.record_count()
     record_id = random.randint(0, record_count - 1)
@@ -84,5 +81,5 @@ def run_database_demo() -> None:
     _measure_lookup(bplus_server, "bplus", hash_hex)
     _measure_lookup(bplus_server, "bplus", hash_hex)
 
-    # run_lookup_demo(linear_db, linear_server, sorted_server, bplus_server)
+    # run_lookup_demo(linear_db, linear_server, bplus_server)
     # run_update_demo(linear_db, bplus_server)

@@ -4,7 +4,7 @@ from typing import Any, Dict, Literal
 
 from .engine import DbEngine
 
-LookupStrategy = Literal["linear", "sorted", "bplus"]
+LookupStrategy = Literal["linear", "bplus"]
 OperationType = Literal["Query", "Command"]
 
 

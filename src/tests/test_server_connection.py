@@ -17,12 +17,10 @@ class TestSocketDecoupling(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test.db")
-        self.idx_path = os.path.join(self.temp_dir.name, "test.idx")
         self.bpt_path = os.path.join(self.temp_dir.name, "test.bpt")
 
         patches = [
             patch.object(database_module, "DEFAULT_DB_PATH", self.db_path),
-            patch.object(database_module, "DEFAULT_INDEX_PATH", self.idx_path),
             patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", self.bpt_path),
         ]
         for p in patches:

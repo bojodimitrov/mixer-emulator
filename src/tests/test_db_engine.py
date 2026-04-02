@@ -12,16 +12,10 @@ class TestDbEngine(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test.db")
-        self.index_path = os.path.join(self.temp_dir.name, "test.idx")
 
         db_path_patch = patch.object(database_module, "DEFAULT_DB_PATH", self.db_path)
-        index_path_patch = patch.object(
-            database_module, "DEFAULT_INDEX_PATH", self.index_path
-        )
         self.addCleanup(db_path_patch.stop)
-        self.addCleanup(index_path_patch.stop)
         db_path_patch.start()
-        index_path_patch.start()
 
         self.addCleanup(self.temp_dir.cleanup)
 

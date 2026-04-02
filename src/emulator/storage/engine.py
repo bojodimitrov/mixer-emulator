@@ -17,7 +17,6 @@ from .constants import (
     DEFAULT_BPLUS_INDEX_PATH,
     DEFAULT_DB_PATH,
     DB_RECORD_SIZE,
-    DEFAULT_INDEX_PATH,
 )
 
 # ── Module-level stripe locks ─────────────────────────────────────────────────
@@ -28,17 +27,13 @@ _ROW_LOCK_STRIPES = 256
 _row_stripe_locks: list[threading.Lock] = [
     threading.Lock() for _ in range(_ROW_LOCK_STRIPES)
 ]
-# Per-index threading locks (in-process); the sidecar lock covers cross-process.
-_sorted_index_threading_lock = threading.Lock()
 
 
 class DbEngine:
     STRATEGY_LINEAR = "linear"
-    STRATEGY_SORTED = "sorted"
     STRATEGY_BPLUS = "bplus"
     LOOKUP_STRATEGIES = {
         STRATEGY_LINEAR,
-        STRATEGY_SORTED,
         STRATEGY_BPLUS,
     }
 
@@ -62,7 +57,7 @@ class DbEngine:
 
     def __init__(
         self,
-        lookup_strategy: Literal["linear", "sorted", "bplus"] = STRATEGY_LINEAR,
+        lookup_strategy: Literal["linear", "bplus"] = STRATEGY_LINEAR,
     ):
         if lookup_strategy not in self.LOOKUP_STRATEGIES:
             supported = ", ".join(sorted(self.LOOKUP_STRATEGIES))
@@ -75,7 +70,6 @@ class DbEngine:
         open(DEFAULT_DB_PATH, "a").close()
         self._lock_path = f"{DEFAULT_DB_PATH}.lock"
         open(self._lock_path, "a").close()
-        self._sorted_index_lock_path = f"{DEFAULT_INDEX_PATH}.lock"
 
     @contextmanager
     def _read_lock(self):
@@ -139,19 +133,6 @@ class DbEngine:
         with _row_stripe_locks[id_ % _ROW_LOCK_STRIPES]:
             yield
 
-    @contextmanager
-    def _index_write_lock(self, lock_path: str):
-        """Exclusive lock on an index: threading lock (in-process) + sidecar (cross-process)."""
-        threading_lock = _sorted_index_threading_lock
-        with threading_lock:
-            open(lock_path, "a").close()  # ensure sidecar exists
-            with open(lock_path, "r+b") as lock_file:
-                self._lock_file(lock_file, shared=False)
-                try:
-                    yield
-                finally:
-                    self._unlock_file(lock_file)
-
     @staticmethod
     def _validate_name(name_str: str, field_name: str = "name_str") -> None:
         if (
@@ -210,15 +191,11 @@ class DbEngine:
     def query_by_hash(self, hash: str) -> Optional[Tuple[int, str]]:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
             return self._query_by_hash_linear(hash)
-        if self.lookup_strategy == self.STRATEGY_SORTED:
-            return self._query_by_hash_sorted(hash)
         return self._query_by_hash_bplus(hash)
 
     def update_record(self, id_: int, new_name_str: str) -> bool:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
             return self._update_record_linear(id_, new_name_str)
-        if self.lookup_strategy == self.STRATEGY_SORTED:
-            return self._update_record_sorted(id_, new_name_str)
         return self._update_record_bplus(id_, new_name_str)
 
     def _query_by_hash_linear(self, hash: str) -> Optional[Tuple[int, str]]:
@@ -241,22 +218,6 @@ class DbEngine:
                     return None
                 finally:
                     mm.close()
-
-    def _query_by_hash_sorted(self, hash: str) -> Optional[Tuple[int, str]]:
-        from .sorted_index import HashIndex
-
-        if not os.path.exists(DEFAULT_INDEX_PATH):
-            raise FileNotFoundError(f"index file not found: {DEFAULT_INDEX_PATH}")
-
-        with HashIndex() as idx:
-            id_ = idx.query_by_hash(hash)
-            if id_ is None:
-                return None
-            try:
-                id_read, name, _ = self.read_record(id_)
-            except Exception:
-                return None
-            return id_read, name
 
     def _query_by_hash_bplus(self, hash: str) -> Optional[Tuple[int, str]]:
         from .b_tree_index import BPlusTreeIndex
@@ -290,66 +251,6 @@ class DbEngine:
                 f.seek(id_ * RECORD_SIZE)
                 f.write(packed)
                 f.flush()
-
-        return True
-
-    def _update_record_sorted(self, id_: int, new_name_str: str) -> bool:
-        from .sorted_index import HashIndex
-
-        self._validate_name(new_name_str, "new_name_str")
-        if not os.path.exists(DEFAULT_INDEX_PATH):
-            raise FileNotFoundError(f"index file not found: {DEFAULT_INDEX_PATH}")
-
-        new_name = new_name_str.encode("ascii")
-        new_hash = compute_hash_for(id_, new_name)
-
-        with self._row_write_lock(id_):
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
-            if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
-                raise IndexError("id out of range")
-
-            with open(DEFAULT_DB_PATH, "r+b") as f:
-                f.seek(id_ * RECORD_SIZE)
-                old_record = f.read(RECORD_SIZE)
-                _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
-
-                if new_hash == old_hash:
-                    return True
-
-                new_packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
-                old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
-
-                f.seek(id_ * RECORD_SIZE)
-                f.write(new_packed)
-                f.flush()
-
-                with self._index_write_lock(self._sorted_index_lock_path):
-                    try:
-                        with HashIndex(writable=True) as idx:
-                            deleted = idx.delete(old_hash)
-                            if not deleted:
-                                f.seek(id_ * RECORD_SIZE)
-                                f.write(old_packed)
-                                f.flush()
-                                return False
-
-                            try:
-                                idx.insert(new_hash, id_)
-                            except Exception:
-                                # Attempt to restore index state before rolling back DB row.
-                                try:
-                                    idx.insert(old_hash, id_)
-                                except Exception:
-                                    pass
-                                f.seek(id_ * RECORD_SIZE)
-                                f.write(old_packed)
-                                f.flush()
-                                return False
-                    except OSError:
-                        f.seek(id_ * RECORD_SIZE)
-                        f.write(old_packed)
-                        f.flush()
-                        raise
 
         return True
 

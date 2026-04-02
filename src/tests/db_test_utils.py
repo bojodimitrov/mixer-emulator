@@ -21,7 +21,6 @@ from dataclasses import dataclass
 class SeededDbPaths:
     temp_dir: tempfile.TemporaryDirectory
     db_path: str
-    idx_path: str
     bpt_path: str
 
 
@@ -40,12 +39,10 @@ def create_seeded_temp_db(
 
     td = tempfile.TemporaryDirectory()
     db_path = os.path.join(td.name, "temp.db")
-    idx_path = os.path.join(td.name, "temp.idx")
     bpt_path = os.path.join(td.name, "temp.bpt")
 
     # Patch module-level constants used by FileDB.
     database_module.DEFAULT_DB_PATH = db_path
-    database_module.DEFAULT_INDEX_PATH = idx_path
     database_module.DEFAULT_BPLUS_INDEX_PATH = bpt_path
 
     db = database_module.DbEngine(lookup_strategy=lookup_strategy)  # type: ignore[arg-type]
@@ -62,6 +59,4 @@ def create_seeded_temp_db(
         # Index is an optimization; callers that don't need it can ignore.
         pass
 
-    return SeededDbPaths(
-        temp_dir=td, db_path=db_path, idx_path=idx_path, bpt_path=bpt_path
-    )
+    return SeededDbPaths(temp_dir=td, db_path=db_path, bpt_path=bpt_path)

@@ -18,5 +18,4 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DB_DIR = PROJECT_ROOT / "db"
 
 DEFAULT_DB_PATH = str(DB_DIR / "mixer_emulator_bin.db")
-DEFAULT_INDEX_PATH = str(DB_DIR / "mixer_emulator.idx")
 DEFAULT_BPLUS_INDEX_PATH = str(DB_DIR / "mixer_emulator.bpt")
