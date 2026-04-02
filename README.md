@@ -7,10 +7,10 @@ This repository is a Python data-system emulator built on a local file database,
 It includes:
 
 - A mmap-backed file database with cross-process read/write locking
-- Three lookup strategies: linear scan, sorted flat index, and B+ tree index
+- Two lookup strategies: linear scan and B+ tree index
 - In-process orchestration (`DbOrchestrator`) plus socket server/client layers (`DbServer`, `DbClient`)
 - A microservice layer (`MicroserviceServer`, `MicroserviceClient`) and frontend runners for corruption/repair flows
-- Writable sorted-index and B+ tree update paths with rollback on index update failure
+- Writable B+ tree update path with rollback on index update failure
 
 ## Project Structure
 
@@ -19,8 +19,6 @@ It includes:
 ├── db/
 │   ├── mixer_emulator_bin.db
 │   ├── mixer_emulator.bpt
-│   ├── mixer_emulator.idx
-│   ├── tmp/
 │   └── tmp_btree/
 ├── src/
 │   ├── emulator/
@@ -50,9 +48,7 @@ The project uses a src layout. Install it in editable mode or set `PYTHONPATH=sr
 Default generated files:
 
 - `db/mixer_emulator_bin.db`: fixed-size record database
-- `db/mixer_emulator.idx`: sorted `(hash, id)` flat index
 - `db/mixer_emulator.bpt`: B+ tree index
-- `db/tmp/`: temporary chunk files used while building `.idx`
 - `db/tmp_btree/`: temporary chunk files used while building `.bpt`
 
 ## Installation
@@ -95,12 +91,6 @@ Build a smaller database slice for quick local testing:
 python -m emulator.storage.database --start 0 --end 100000
 ```
 
-Build the sorted index:
-
-```bash
-python -m emulator.storage.sorted_index
-```
-
 Build the B+ tree index:
 
 ```bash
@@ -137,7 +127,6 @@ Choose DB lookup strategy:
 
 ```bash
 python -m emulator.main --lookup-strategy bplus
-python -m emulator.main --lookup-strategy sorted
 python -m emulator.main --lookup-strategy linear
 ```
 
@@ -146,7 +135,7 @@ Main orchestration flags:
 - `--corrupters <int>`: number of corrupter client workers (default: `2`)
 - `--repairers <int>`: number of repairer client workers (default: `2`)
 - `--client-pause-ms <float>`: pause between client operations (default: `20.0`)
-- `--lookup-strategy <linear|sorted|bplus>`: DB lookup backend (default: `bplus`)
+- `--lookup-strategy <linear|bplus>`: DB lookup backend (default: `bplus`)
 - `--headless`: print metrics in terminal instead of opening a window
 - `--duration-sec <float>`: optional stop-after duration for headless runs
 
@@ -294,7 +283,6 @@ Current test coverage includes:
 
 - Core database read and linear-hash lookup behavior
 - Concurrent reads across multiple `DbEngine` connections
-- Sorted index build, lookup, insert, delete, and update dispatch
 - B+ tree build, lookup, insert, delete, update, and small-capacity regression cases
 
 The suite currently includes server, client, transport, and storage tests.
@@ -330,21 +318,6 @@ Offset  Size   Field
 ```
 
 Size example: `11.8M × 45 bytes ≈ 535 MB`.
-
-### Sorted Index File (.idx)
-
-Sorted `(hash, id)` pairs for binary search.
-
-```
-Offset  Size   Field
-──────────────────────────
-0       32     Hash (SHA256)
-32      8      Record ID (uint64)
-────────────────────────── 40 bytes per entry
-...
-```
-
-Sorted by hash in ascending byte order. Built with external sort plus merge.
 
 ### B+ Tree Index File (.bpt)
 
@@ -411,10 +384,9 @@ Lookup path: root → internal nodes → leaf → binary search inside the leaf.
 
 ## Lookup Strategies
 
-`DbEngine` supports three lookup modes:
+`DbEngine` supports two lookup modes:
 
 - `linear`: scan the database file directly
-- `sorted`: binary search against `db/mixer_emulator.idx`
 - `bplus`: traverse `db/mixer_emulator.bpt`
 
 Example:
@@ -428,11 +400,10 @@ result = db.query_by_hash(hash_bytes)
 
 ## Query Methods
 
-| Method                | Time     | Space | Setup           |
-| --------------------- | -------- | ----- | --------------- |
-| Linear scan           | O(n)     | O(1)  | None            |
-| Binary search on .idx | O(log n) | O(1)  | Build .idx file |
-| B+ tree               | O(log n) | O(1)  | Build .bpt file |
+| Method      | Time     | Space | Setup           |
+| ----------- | -------- | ----- | --------------- |
+| Linear scan | O(n)     | O(1)  | None            |
+| B+ tree     | O(log n) | O(1)  | Build .bpt file |
 
 ## Example Benchmark (Single Run)
 
@@ -468,7 +439,7 @@ This locking is implemented with platform-specific primitives and works on Windo
 
 ## Update Operations
 
-Both on-disk index types now have writable update support, but with different tradeoffs.
+The B+ tree index supports writable updates with rollback safety.
 
 ### Via Database Class
 
@@ -483,14 +454,7 @@ db.update_record_with_bplus_index(
 )
 ```
 
-You can also use generic dispatch based on the configured lookup strategy:
-
-```python
-from emulator.storage.engine import DbEngine
-
-db = DbEngine(lookup_strategy=DbEngine.STRATEGY_SORTED)
-db.update_record(42, "zzzzz")
-```
+You can also use generic dispatch based on the configured lookup strategy.
 
 This operation:
 
@@ -512,31 +476,17 @@ with BPlusTreeIndex(writable=True) as idx:
     )
 ```
 
-### Via Sorted Index Directly
-
-```python
-from emulator.storage.sorted_index import HashIndex
-
-with HashIndex(writable=True) as idx:
-    idx.delete(old_hash_bytes)
-    idx.insert(new_hash_bytes, 42)
-```
-
 ### Implementation Details
 
-The two writable index paths behave differently:
-
-- `.idx` remains a sorted flat file, so insert/delete/update shift file contents and are `O(n)` in the size of the index
-- `.bpt` uses incremental page-local writes: follow one root-to-leaf path, update the target page, and propagate splits or separator changes only if needed
+The writable B+ tree path uses incremental page-local writes: follow one root-to-leaf path, update the target page, and propagate splits or separator changes only if needed.
 
 The B+ tree write path no longer rebuilds the full tree for ordinary insert/update/delete operations.
 
 ### Insert and Delete Operations
 
-| Index  | Insert/Delete behavior                                                     |
-| ------ | -------------------------------------------------------------------------- |
-| `.idx` | Writable, but entries are shifted in-place so large files remain expensive |
-| `.bpt` | Supports online writable insert/delete/update through the tree itself      |
+| Index  | Insert/Delete behavior                                                |
+| ------ | --------------------------------------------------------------------- |
+| `.bpt` | Supports online writable insert/delete/update through the tree itself |
 
 ### Time Complexity
 
