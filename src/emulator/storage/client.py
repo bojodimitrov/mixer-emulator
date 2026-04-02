@@ -17,7 +17,7 @@ class DbClient:
 
     def __init__(
         self,
-        timeout_sec: float = 30.0,
+        timeout_sec: float = 10.0,
         pool_size: int = 0,
     ):
         self.endpoint = TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port))

@@ -9,7 +9,7 @@ class MicroserviceClient:
 
     def __init__(
         self,
-        timeout_sec: float = 30.0,
+        timeout_sec: float = 10.0,
     ):
         from ..transport_layer.transport import TcpEndpoint
 

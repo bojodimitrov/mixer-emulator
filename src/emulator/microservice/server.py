@@ -27,8 +27,8 @@ class MicroserviceServer:
         latency_ms: int = 50,
         pool_size: int = 200,
         connection_pool_size: int = 16,
-        accept_timeout_sec: float = 3.0,
-        conn_timeout_sec: float = 30.0,
+        accept_timeout_sec: float = 1.0,
+        conn_timeout_sec: float = 10.0,
     ):
         self.host = str(SERVICE_ENDPOINT.host)
         self.port = int(SERVICE_ENDPOINT.port)

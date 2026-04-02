@@ -1,4 +1,5 @@
 import argparse
+import threading
 from contextlib import contextmanager
 import mmap
 import os
@@ -8,6 +9,7 @@ from typing import Literal, Optional, Tuple
 from emulator.transport_layer.transport import hex_from_bytes
 
 from ..utils import compute_hash_for, id_to_name, print_time
+from .b_tree_index import BPlusTreeIndex
 from .constants import (
     RECORD_STRUCT,
     RECORD_SIZE,
@@ -17,6 +19,17 @@ from .constants import (
     DB_RECORD_SIZE,
     DEFAULT_INDEX_PATH,
 )
+
+# ── Module-level stripe locks ─────────────────────────────────────────────────
+# Threading locks for in-process row-level mutual exclusion.  256 stripes means
+# only rows that share the same stripe (id % 256) serialise; all other rows run
+# fully in parallel.  The sidecar file locks remain for cross-process bulk ops.
+_ROW_LOCK_STRIPES = 256
+_row_stripe_locks: list[threading.Lock] = [
+    threading.Lock() for _ in range(_ROW_LOCK_STRIPES)
+]
+# Per-index threading locks (in-process); the sidecar lock covers cross-process.
+_sorted_index_threading_lock = threading.Lock()
 
 
 class DbEngine:
@@ -62,6 +75,7 @@ class DbEngine:
         open(DEFAULT_DB_PATH, "a").close()
         self._lock_path = f"{DEFAULT_DB_PATH}.lock"
         open(self._lock_path, "a").close()
+        self._sorted_index_lock_path = f"{DEFAULT_INDEX_PATH}.lock"
 
     @contextmanager
     def _read_lock(self):
@@ -109,6 +123,35 @@ class DbEngine:
 
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    # ── Row-level locking ────────────────────────────────────────────────────
+    # Threading stripe locks allow concurrent access to different rows while
+    # serialising access to the same row stripe within a process.
+
+    @contextmanager
+    def _row_read_lock(self, id_: int):
+        """Acquire the stripe lock for reading row id_."""
+        with _row_stripe_locks[id_ % _ROW_LOCK_STRIPES]:
+            yield
+
+    @contextmanager
+    def _row_write_lock(self, id_: int):
+        """Acquire the stripe lock for writing row id_."""
+        with _row_stripe_locks[id_ % _ROW_LOCK_STRIPES]:
+            yield
+
+    @contextmanager
+    def _index_write_lock(self, lock_path: str):
+        """Exclusive lock on an index: threading lock (in-process) + sidecar (cross-process)."""
+        threading_lock = _sorted_index_threading_lock
+        with threading_lock:
+            open(lock_path, "a").close()  # ensure sidecar exists
+            with open(lock_path, "r+b") as lock_file:
+                self._lock_file(lock_file, shared=False)
+                try:
+                    yield
+                finally:
+                    self._unlock_file(lock_file)
+
     @staticmethod
     def _validate_name(name_str: str, field_name: str = "name_str") -> None:
         if (
@@ -153,11 +196,10 @@ class DbEngine:
                     mm.close()
 
     def read_record(self, id_: int) -> Tuple[int, str, str]:
-        with self._read_lock():
+        with self._row_read_lock(id_):
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
-
             with open(DEFAULT_DB_PATH, "rb") as f:
                 f.seek(id_ * RECORD_SIZE)
                 data = f.read(RECORD_SIZE)
@@ -237,15 +279,13 @@ class DbEngine:
     def _update_record_linear(self, id_: int, new_name_str: str) -> bool:
         self._validate_name(new_name_str, "new_name_str")
 
-        with self._write_lock():
+        with self._row_write_lock(id_):
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
-
             new_name = new_name_str.encode("ascii")
             new_hash = compute_hash_for(id_, new_name)
             packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
-
             with open(DEFAULT_DB_PATH, "r+b") as f:
                 f.seek(id_ * RECORD_SIZE)
                 f.write(packed)
@@ -260,7 +300,10 @@ class DbEngine:
         if not os.path.exists(DEFAULT_INDEX_PATH):
             raise FileNotFoundError(f"index file not found: {DEFAULT_INDEX_PATH}")
 
-        with self._write_lock():
+        new_name = new_name_str.encode("ascii")
+        new_hash = compute_hash_for(id_, new_name)
+
+        with self._row_write_lock(id_):
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
@@ -270,8 +313,6 @@ class DbEngine:
                 old_record = f.read(RECORD_SIZE)
                 _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
 
-                new_name = new_name_str.encode("ascii")
-                new_hash = compute_hash_for(id_, new_name)
                 if new_hash == old_hash:
                     return True
 
@@ -282,32 +323,33 @@ class DbEngine:
                 f.write(new_packed)
                 f.flush()
 
-                try:
-                    with HashIndex(writable=True) as idx:
-                        deleted = idx.delete(old_hash)
-                        if not deleted:
-                            f.seek(id_ * RECORD_SIZE)
-                            f.write(old_packed)
-                            f.flush()
-                            return False
+                with self._index_write_lock(self._sorted_index_lock_path):
+                    try:
+                        with HashIndex(writable=True) as idx:
+                            deleted = idx.delete(old_hash)
+                            if not deleted:
+                                f.seek(id_ * RECORD_SIZE)
+                                f.write(old_packed)
+                                f.flush()
+                                return False
 
-                        try:
-                            idx.insert(new_hash, id_)
-                        except Exception:
-                            # Attempt to restore index state before rolling back DB row.
                             try:
-                                idx.insert(old_hash, id_)
+                                idx.insert(new_hash, id_)
                             except Exception:
-                                pass
-                            f.seek(id_ * RECORD_SIZE)
-                            f.write(old_packed)
-                            f.flush()
-                            return False
-                except OSError:
-                    f.seek(id_ * RECORD_SIZE)
-                    f.write(old_packed)
-                    f.flush()
-                    raise
+                                # Attempt to restore index state before rolling back DB row.
+                                try:
+                                    idx.insert(old_hash, id_)
+                                except Exception:
+                                    pass
+                                f.seek(id_ * RECORD_SIZE)
+                                f.write(old_packed)
+                                f.flush()
+                                return False
+                    except OSError:
+                        f.seek(id_ * RECORD_SIZE)
+                        f.write(old_packed)
+                        f.flush()
+                        raise
 
         return True
 
@@ -319,7 +361,10 @@ class DbEngine:
                 f"B+ tree index file not found: {DEFAULT_BPLUS_INDEX_PATH}"
             )
 
-        with self._write_lock():
+        new_name = new_name_str.encode("ascii")
+        new_hash = compute_hash_for(id_, new_name)
+
+        with self._row_write_lock(id_):
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
@@ -329,31 +374,24 @@ class DbEngine:
                 old_record = f.read(RECORD_SIZE)
                 _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
 
-                new_name = new_name_str.encode("ascii")
-                new_hash = compute_hash_for(id_, new_name)
                 packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
+                old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
 
                 f.seek(id_ * RECORD_SIZE)
                 f.write(packed)
                 f.flush()
 
-                # Update the B-tree index
-                from .b_tree_index import BPlusTreeIndex
-
+                # Update the B+ tree index directly; BPlusTreeIndex handles concurrency.
                 try:
                     with BPlusTreeIndex(writable=True) as idx:
                         success = idx.update(old_hash, new_hash, id_)
                         if not success:
                             # Roll back DB update when index update cannot be applied.
-                            old_packed = struct.pack(
-                                RECORD_STRUCT, id_, old_name_b, old_hash
-                            )
                             f.seek(id_ * RECORD_SIZE)
                             f.write(old_packed)
                             f.flush()
                             return False
                 except Exception:
-                    old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
                     f.seek(id_ * RECORD_SIZE)
                     f.write(old_packed)
                     f.flush()
