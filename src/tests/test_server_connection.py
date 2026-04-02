@@ -88,6 +88,26 @@ class TestSocketDecoupling(unittest.TestCase):
         self.assertEqual(resp.get("status"), "error")
         self.assertIn("unsupported route", str(resp.get("error", "")).lower())
 
+    def test_microservice_client_pool_reuses_socket(self):
+        from emulator.transport_layer.transport import hex_from_bytes
+
+        client = MicroserviceClient(pool_size=2)
+        self.addCleanup(client.close)
+
+        record_id = 7
+        h = compute_hash_for(record_id, id_to_name(record_id))
+
+        # Sequential requests should reuse one pooled socket instead of creating new sockets.
+        for _ in range(12):
+            resp = client.request("GET", {"hash": hex_from_bytes(h)}, "/hash")
+            self.assertEqual(resp.get("status"), "ok")
+
+        self.assertEqual(client._created, 1)
+        self.assertIsNotNone(client._pool)
+        pool = client._pool
+        assert pool is not None
+        self.assertEqual(pool.qsize(), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

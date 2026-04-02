@@ -1,5 +1,6 @@
 import random
 import string
+import time
 from typing import Any, Dict, Optional
 
 from emulator.frontend.loop_cancellation import LoopCancellation
@@ -19,8 +20,10 @@ class Corrupter:
 
     def __init__(
         self,
+        metrics_client: Any = None,
     ):
         self.client = MicroserviceClient()
+        self._metrics_client = metrics_client
 
     def run_once(
         self,
@@ -35,21 +38,31 @@ class Corrupter:
         Returns the service response dict, enriched with the chosen id/name.
         """
 
-        if record_id is None:
-            record_id = random.randint(0, _MAX_DB_ID)
-        if new_name is None:
-            new_name = _random_name()
+        started = time.perf_counter()
+        ok = False
+        try:
+            if record_id is None:
+                record_id = random.randint(0, _MAX_DB_ID)
+            if new_name is None:
+                new_name = _random_name()
 
-        resp = self.client.request(
-            "POST", {"id": int(record_id), "new_name": str(new_name)}, "/name"
-        )
+            resp = self.client.request(
+                "POST", {"id": int(record_id), "new_name": str(new_name)}, "/name"
+            )
 
-        # Include chosen inputs so orchestrators/demos can chain actions.
-        if isinstance(resp, dict):
-            resp = dict(resp)
-            resp.setdefault("id", int(record_id))
-            resp.setdefault("new_name", str(new_name))
-        return resp
+            ok = isinstance(resp, dict) and resp.get("status") == "ok"
+
+            # Include chosen inputs so orchestrators/demos can chain actions.
+            if isinstance(resp, dict):
+                resp = dict(resp)
+                resp.setdefault("id", int(record_id))
+                resp.setdefault("new_name", str(new_name))
+            return resp
+        finally:
+            if self._metrics_client is not None:
+                self._metrics_client.record(
+                    "corrupter", ok, (time.perf_counter() - started) * 1000.0
+                )
 
     def run_loop(
         self,
@@ -65,19 +78,28 @@ class Corrupter:
             random.seed(int(seed))
         try:
             while not cancellation.is_cancelled():
-                self.run_once(record_id=record_id, new_name=new_name)
+                try:
+                    self.run_once(record_id=record_id, new_name=new_name)
+                except Exception as exc:
+                    if self._metrics_client is not None:
+                        self._metrics_client.record_error("corrupter", str(exc))
+                    print(f"[corrupter] stopping after request failure: {exc}")
+                    return
                 if pause_ms:
                     if cancellation.pause_or_cancel(max(0.0, float(pause_ms) / 1000.0)):
                         break
         except KeyboardInterrupt:
             return
+        finally:
+            self.client.close()
 
 
 class Repairer:
     """Frontend client that sends GET requests and, on missing records, repairs via POST."""
 
-    def __init__(self):
+    def __init__(self, metrics_client: Any = None):
         self.client = MicroserviceClient()
+        self._metrics_client = metrics_client
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:
         """Attempt to read the canonical record, and repair if missing.
@@ -87,28 +109,40 @@ class Repairer:
           2) If result is None -> POST(correct_name)
         """
 
-        if record_id is None:
-            record_id = random.randint(0, _MAX_DB_ID)
+        started = time.perf_counter()
+        ok = False
+        try:
+            if record_id is None:
+                record_id = random.randint(0, _MAX_DB_ID)
 
-        correct_name = id_to_name(record_id)
-        correct_hash = compute_hash_for(record_id, correct_name)
+            correct_name = id_to_name(record_id)
+            correct_hash = compute_hash_for(record_id, correct_name)
 
-        get_response = self.client.request(
-            "GET", {"hash": hex_from_bytes(correct_hash)}, "/hash"
-        )
-        if (
-            get_response.get("status") == "ok"
-            and get_response.get("result") is not None
-        ):
-            return {"action": "ok", "id": record_id, "response": get_response}
+            get_response = self.client.request(
+                "GET", {"hash": hex_from_bytes(correct_hash)}, "/hash"
+            )
+            if (
+                get_response.get("status") == "ok"
+                and get_response.get("result") is not None
+            ):
+                ok = True
+                return {"action": "ok", "id": record_id, "response": get_response}
 
-        repair_response = self.client.request(
-            "POST",
-            {"id": int(record_id), "new_name": correct_name.decode("ascii")},
-            "/name",
-        )
-
-        return {"action": "repaired", "id": record_id, "response": repair_response}
+            repair_response = self.client.request(
+                "POST",
+                {"id": int(record_id), "new_name": correct_name.decode("ascii")},
+                "/name",
+            )
+            ok = (
+                isinstance(repair_response, dict)
+                and repair_response.get("status") == "ok"
+            )
+            return {"action": "repaired", "id": record_id, "response": repair_response}
+        finally:
+            if self._metrics_client is not None:
+                self._metrics_client.record(
+                    "repairer", ok, (time.perf_counter() - started) * 1000.0
+                )
 
     def run_loop(
         self,
@@ -124,9 +158,17 @@ class Repairer:
 
         try:
             while not cancellation.is_cancelled():
-                self.run_once(record_id=record_id)
+                try:
+                    self.run_once(record_id=record_id)
+                except Exception as exc:
+                    if self._metrics_client is not None:
+                        self._metrics_client.record_error("repairer", str(exc))
+                    print(f"[repairer] stopping after request failure: {exc}")
+                    return
                 if pause_ms:
                     if cancellation.pause_or_cancel(max(0.0, float(pause_ms) / 1000.0)):
                         break
         except KeyboardInterrupt:
             return
+        finally:
+            self.client.close()

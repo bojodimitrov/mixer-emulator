@@ -24,5 +24,12 @@ class ServiceEndpoint:
     port: int = 50002
 
 
+@dataclass(frozen=True)
+class MetricsEndpoint:
+    host: str = "127.0.0.1"
+    port: int = 50003
+
+
 DB_ENDPOINT = DbEndpoint()
 SERVICE_ENDPOINT = ServiceEndpoint()
+METRICS_ENDPOINT = MetricsEndpoint()

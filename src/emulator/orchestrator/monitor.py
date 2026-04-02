@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
-from .metrics import now
+from emulator.metrics.runtime_metrics import now
 from .runtime import SystemOrchestrator
 
 
@@ -12,6 +12,20 @@ def format_block(name: str, data: Dict[str, Any]) -> str:
         f"{name}: total={data['total']} ok={data['ok']} err={data['error']} "
         f"ops/s={data['ops_per_sec']:.2f} last={data['last_latency_ms']:.1f}ms"
     )
+
+
+def format_errors(errors: Any, *, limit: int = 5) -> list[str]:
+    if not isinstance(errors, list) or not errors:
+        return ["recent_errors: none"]
+
+    lines = ["recent_errors:"]
+    for e in errors[-limit:]:
+        if not isinstance(e, dict):
+            continue
+        src = str(e.get("source", "unknown"))
+        msg = str(e.get("message", ""))
+        lines.append(f"  [{src}] {msg}")
+    return lines
 
 
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
@@ -38,7 +52,16 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     label.pack(fill="both", expand=True)
 
     def tick() -> None:
-        snap = orchestrator.metrics.snapshot()
+        try:
+            snap = orchestrator.metrics.snapshot()
+        except Exception as exc:
+            text.set(f"metrics snapshot failed: {exc}")
+            if orchestrator.is_running:
+                root.after(400, tick)
+            else:
+                root.destroy()
+            return
+
         lines = [
             "System Orchestrator",
             f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
@@ -46,12 +69,13 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
             format_block("service", snap["service"]),
             format_block("corrupter", snap["corrupter"]),
             format_block("repairer", snap["repairer"]),
+            *format_errors(snap.get("recent_errors")),
             "Close this window to stop all components.",
         ]
         text.set("\n".join(lines))
 
         if orchestrator.is_running:
-            root.after(400, tick)
+            root.after(2000, tick)
         else:
             root.destroy()
 
@@ -83,6 +107,8 @@ def run_headless_monitor(
                 + " | "
                 + format_block("repairer", snap["repairer"])
             )
+            for line in format_errors(snap.get("recent_errors"), limit=3):
+                print(line)
 
             if duration_sec is not None and (now() - started) >= duration_sec:
                 break

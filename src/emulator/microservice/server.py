@@ -3,7 +3,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
+from ..metrics.collector import MetricsCollectorClient
 from ..servers_config import SERVICE_ENDPOINT
+from ..metrics.runtime_metrics import now
 from .framework import Microservice, Request
 from ..transport_layer.transport import (
     recv_message,
@@ -27,6 +29,7 @@ class MicroserviceServer:
         latency_ms: int = 50,
         pool_size: int = 200,
         connection_pool_size: int = 16,
+        max_requests_per_connection: int = 8,
         accept_timeout_sec: float = 1.0,
         conn_timeout_sec: float = 10.0,
     ):
@@ -41,8 +44,10 @@ class MicroserviceServer:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._connection_pool_size = max(1, int(connection_pool_size))
+        self.max_requests_per_connection = max(1, int(max_requests_per_connection))
         self.accept_timeout_sec = float(accept_timeout_sec)
         self.conn_timeout_sec = float(conn_timeout_sec)
+        self._metrics_client: MetricsCollectorClient = MetricsCollectorClient()
         self._executor: Optional[ThreadPoolExecutor] = None
 
     def start(self) -> None:
@@ -78,6 +83,7 @@ class MicroserviceServer:
         if self._executor:
             self._executor.shutdown(wait=True)
             self._executor = None
+        self._metrics_client.close()
         self._service.stop()
 
     def _serve(self) -> None:
@@ -91,18 +97,44 @@ class MicroserviceServer:
             except OSError:
                 break
 
-            self._executor.submit(self._handle_conn, conn)
+            self._executor.submit(self._handle_connection, conn)
 
-    def _handle_conn(self, conn: socket.socket) -> None:
+    def _handle_connection(self, conn: socket.socket) -> None:
         with conn:
             conn.settimeout(self.conn_timeout_sec)
-            reply: Dict[str, Any]
-            try:
-                msg = recv_message(conn)
-                reply = self._handle_message(msg)
-            except Exception as exc:
-                reply = {"status": "error", "error": str(exc)}
-            send_message(conn, reply)
+            handled = 0
+            while (
+                not self._stop_event.is_set()
+                and handled < self.max_requests_per_connection
+            ):
+                reply: Dict[str, Any]
+                started = now()
+                try:
+                    msg = recv_message(conn)
+                except (ConnectionError, OSError, socket.timeout):
+                    return
+                except Exception as exc:
+                    self._metrics_client.record_error("service", str(exc))
+                    send_message(conn, {"status": "error", "error": str(exc)})
+                    continue
+
+                if msg.get("op") == "Close":
+                    send_message(conn, {"status": "ok", "result": True})
+                    return
+
+                try:
+                    reply = self._handle_message(msg)
+                except Exception as exc:
+                    self._metrics_client.record_error("service", str(exc))
+                    reply = {"status": "error", "error": str(exc)}
+                finally:
+                    self._emit_metrics(reply, started)
+                send_message(conn, reply)
+                handled += 1
+
+    def _emit_metrics(self, resp: Dict[str, Any], started: float) -> None:
+        ok = isinstance(resp, dict) and resp.get("status") == "ok"
+        self._metrics_client.record("service", ok, (now() - started) * 1000.0)
 
     def _handle_message(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         method = (msg.get("method") or "").upper()

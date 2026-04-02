@@ -3,8 +3,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
+from ..metrics.collector import MetricsCollectorClient
 from ..transport_layer.transport import recv_message, send_message
 from ..servers_config import DB_ENDPOINT
+from ..metrics.runtime_metrics import now
 from .engine import DbEngine
 from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
 
@@ -40,6 +42,7 @@ class DbServer:
         self.max_connections = int(max_connections)
         self.worker_pool_size = int(worker_pool_size)
         self.tcp_nodelay = bool(tcp_nodelay)
+        self._metrics_client: MetricsCollectorClient = MetricsCollectorClient()
 
         self._socket: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
@@ -85,6 +88,7 @@ class DbServer:
 
         if self._executor:
             self._executor.shutdown(wait=True)
+        self._metrics_client.close()
         self._db_orchestrator.close()
 
     def _serve(self) -> None:
@@ -120,6 +124,7 @@ class DbServer:
                     # Client disconnected / idle timeout / socket died.
                     return
                 except Exception as exc:
+                    self._metrics_client.record_error("db", str(exc))
                     send_message(connection, {"status": "error", "error": str(exc)})
                     continue
 
@@ -127,11 +132,19 @@ class DbServer:
                     send_message(connection, {"status": "ok", "result": True})
                     return
 
+                started = now()
                 try:
                     resp = self._dispatch(req)
                 except Exception as exc:
+                    self._metrics_client.record_error("db", str(exc))
                     resp = {"status": "error", "error": str(exc)}
+                finally:
+                    self._emit_metrics(resp, started)
                 send_message(connection, resp)
+
+    def _emit_metrics(self, resp: Dict[str, Any], started: float) -> None:
+        ok = isinstance(resp, dict) and resp.get("status") == "ok"
+        self._metrics_client.record("db", ok, (now() - started) * 1000.0)
 
     def _dispatch(self, req: Dict[str, Any]) -> Dict[str, Any]:
         op = req.get("op")

@@ -13,7 +13,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run emulator system orchestrator")
     parser.add_argument("--corrupters", type=int, default=2)
     parser.add_argument("--repairers", type=int, default=2)
-    parser.add_argument("--client-pause-ms", type=float, default=100.0)
+    parser.add_argument("--client-pause-ms", type=float, default=500.0)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--duration-sec", type=float, default=None)
     parser.add_argument(

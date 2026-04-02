@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Deque, Dict
 
 
 def now() -> float:
@@ -18,6 +19,13 @@ class Counter:
     last_latency_ms: float = 0.0
 
 
+@dataclass
+class ErrorEvent:
+    ts_sec: float
+    source: str
+    message: str
+
+
 class RuntimeMetrics:
     def __init__(self) -> None:
         self.started_at = now()
@@ -26,6 +34,7 @@ class RuntimeMetrics:
         self.service = Counter()
         self.client_corrupter = Counter()
         self.client_repairer = Counter()
+        self._recent_errors: Deque[ErrorEvent] = deque(maxlen=200)
 
     def record_db(self, ok: bool, latency_ms: float) -> None:
         self._record(self.db, ok, latency_ms)
@@ -36,6 +45,12 @@ class RuntimeMetrics:
     def record_client(self, kind: str, ok: bool, latency_ms: float) -> None:
         target = self.client_corrupter if kind == "corrupter" else self.client_repairer
         self._record(target, ok, latency_ms)
+
+    def record_error(self, source: str, message: str) -> None:
+        with self._lock:
+            self._recent_errors.append(
+                ErrorEvent(ts_sec=now(), source=str(source), message=str(message))
+            )
 
     def _record(self, counter: Counter, ok: bool, latency_ms: float) -> None:
         with self._lock:
@@ -55,6 +70,14 @@ class RuntimeMetrics:
                 "service": self._counter_snapshot(self.service, up_sec),
                 "corrupter": self._counter_snapshot(self.client_corrupter, up_sec),
                 "repairer": self._counter_snapshot(self.client_repairer, up_sec),
+                "recent_errors": [
+                    {
+                        "ts_sec": e.ts_sec,
+                        "source": e.source,
+                        "message": e.message,
+                    }
+                    for e in list(self._recent_errors)
+                ],
             }
 
     @staticmethod
