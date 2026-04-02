@@ -152,12 +152,14 @@ Command used:
 Observed result:
 
 - With `6` corrupters and `24` repairers, the system was fairly stable.
+- After the row/page-level locking update, the system sustained high-concurrency runs with `200` corrupters and `200` repairers without recorded errors in the sampled 60.2s window.
 
 | Duration (s) | Corrupters | Repairers | DB ops/s | Service ops/s | Total errors |
 | ------------ | ---------: | --------: | -------: | ------------: | -----------: |
 | 30           |          6 |        24 |    56.49 |         56.49 |  3+1 layered |
 | 30           |          0 |        50 |   139.78 |        139.78 |            0 |
 | 30           |         15 |         0 |    16.24 |         16.24 |    5 layered |
+| 60           |        200 |       200 |   130.00 |        130.00 |            0 |
 
 Quick read for first row:
 
@@ -171,8 +173,8 @@ Notes:
 
 - Wait time between frontend clients requests is 100ms.
 - `Total errors` is currently recorded as layered counters, not a single end-to-end deduplicated value.
-- The current main bottleneck is the write-operation lock mechanism, which locks the whole table during writes.
-- A planned optimization is row-level locking so concurrent writes/read-write mixes scale more like modern SQL servers.
+- For the 60.2s run with `200/200` workers, frontend cumulative averages were `66.44 ops/s` (corrupter) and `62.67 ops/s` (repairer), with zero recorded errors.
+- Bottlenecks under high worker counts are now dominated by capacity and queueing/backpressure rather than full-table write locking.
 
 ## Server and Service Layers
 

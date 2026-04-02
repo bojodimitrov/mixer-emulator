@@ -44,6 +44,18 @@ class TestDbEngine(unittest.TestCase):
 
         self.assertIsNone(self.db.query_by_hash(missing_hash.hex()))
 
+    def test_corruption_level_counts_mismatched_names(self):
+        baseline = self.db.get_corruption_level()
+        self.assertEqual(baseline["corrupted_records"], 0)
+        self.assertEqual(baseline["corruption_percent"], 0.0)
+
+        self.assertTrue(self.db.update_record(3, "zzzzz"))
+
+        after = self.db.get_corruption_level()
+        self.assertEqual(after["total_records"], 32)
+        self.assertEqual(after["corrupted_records"], 1)
+        self.assertEqual(after["corruption_percent"], 3.12)
+
     def test_multiple_connections_can_read_concurrently(self):
         exceptions = []
         start_event = threading.Event()

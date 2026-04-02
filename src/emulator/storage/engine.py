@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import mmap
 import os
 import struct
-from typing import Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Tuple
 
 from emulator.transport_layer.transport import hex_from_bytes
 
@@ -187,6 +187,41 @@ class DbEngine:
 
         id_read, name_b, hashb = struct.unpack(RECORD_STRUCT, data)
         return id_read, name_b.decode("ascii"), hex_from_bytes(hashb)
+
+    def count_corrupted_records(self) -> int:
+        """Count rows where stored name differs from canonical id_to_name(id)."""
+        with self._read_lock():
+            file_size = os.path.getsize(DEFAULT_DB_PATH)
+
+            if file_size == 0:
+                return 0
+
+            corrupted = 0
+            with open(DEFAULT_DB_PATH, "rb") as f:
+                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+                try:
+                    for off in range(0, len(mm), RECORD_SIZE):
+                        id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
+                        if name_b != id_to_name(int(id_)):
+                            corrupted += 1
+                finally:
+                    mm.close()
+
+            return corrupted
+
+    def get_corruption_level(self) -> Dict[str, float | int]:
+        """Return corruption metrics for the whole DB."""
+        total_records = self.record_count()
+        corrupted_records = self.count_corrupted_records()
+        corruption_percent = (
+            (corrupted_records / total_records) if total_records > 0 else 0.0
+        ) * 100.0
+
+        return {
+            "total_records": total_records,
+            "corrupted_records": corrupted_records,
+            "corruption_percent": round(corruption_percent, 2),
+        }
 
     def query_by_hash(self, hash: str) -> Optional[Tuple[int, str]]:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
