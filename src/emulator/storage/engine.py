@@ -1,9 +1,11 @@
 import argparse
+import errno
 import threading
 from contextlib import contextmanager
 import mmap
 import os
 import struct
+import time
 from typing import Dict, Literal, Optional, Tuple
 
 from emulator.transport_layer.transport import hex_from_bytes
@@ -27,6 +29,8 @@ _ROW_LOCK_STRIPES = 256
 _row_stripe_locks: list[threading.Lock] = [
     threading.Lock() for _ in range(_ROW_LOCK_STRIPES)
 ]
+_LOCK_RETRY_ATTEMPTS = 50
+_LOCK_RETRY_DELAY_SEC = 0.01
 
 
 class DbEngine:
@@ -91,18 +95,44 @@ class DbEngine:
 
     @staticmethod
     def _lock_file(lock_file, shared: bool) -> None:
+        # Some runtimes can transiently raise EDEADLK while another thread in the
+        # same process is releasing a byte-range lock. Retry briefly before failing.
+        retryable_errnos = {
+            errno.EDEADLK,
+            errno.EACCES,
+            errno.EAGAIN,
+        }
         if os.name == "nt":
             import msvcrt
 
-            lock_file.seek(0)
             mode = msvcrt.LK_RLCK if shared else msvcrt.LK_LOCK
-            msvcrt.locking(lock_file.fileno(), mode, 1)
+            for attempt in range(_LOCK_RETRY_ATTEMPTS):
+                try:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), mode, 1)
+                    return
+                except OSError as exc:
+                    if (
+                        exc.errno in retryable_errnos
+                        and attempt < _LOCK_RETRY_ATTEMPTS - 1
+                    ):
+                        time.sleep(_LOCK_RETRY_DELAY_SEC)
+                        continue
+                    raise
             return
 
         import fcntl
 
         mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
-        fcntl.flock(lock_file.fileno(), mode)
+        for attempt in range(_LOCK_RETRY_ATTEMPTS):
+            try:
+                fcntl.flock(lock_file.fileno(), mode)
+                return
+            except OSError as exc:
+                if exc.errno in retryable_errnos and attempt < _LOCK_RETRY_ATTEMPTS - 1:
+                    time.sleep(_LOCK_RETRY_DELAY_SEC)
+                    continue
+                raise
 
     @staticmethod
     def _unlock_file(lock_file) -> None:

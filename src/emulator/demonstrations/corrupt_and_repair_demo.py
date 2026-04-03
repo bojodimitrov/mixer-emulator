@@ -36,9 +36,7 @@ def run_demo(*, seed: int | None = None) -> None:
     )
     db_server.start()
 
-    svc_server = MicroserviceServer(
-        latency_ms=20,
-    )
+    svc_server = MicroserviceServer()
     svc_server.start()
 
     try:

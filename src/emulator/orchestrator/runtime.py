@@ -29,20 +29,13 @@ class SystemOrchestrator:
         self._repairer_count = max(0, int(repairer_count))
         self._client_pause_ms = max(0.0, float(client_pause_ms))
 
-        total_frontend_workers = self._corrupter_count + self._repairer_count
-        # Keep connection handling capacity proportional to load so one client class
-        # does not monopolize service sockets under heavy concurrency.
-        service_conn_workers = max(16, min(512, total_frontend_workers))
+        # Fixed request worker budget for service-side work. Keep independent from
+        # frontend client thread counts to reflect production-style sizing.
 
         self.db_server = DbServer(
             lookup_strategy=db_lookup_strategy,
         )
-        self.service_server = MicroserviceServer(
-            latency_ms=15,
-            pool_size=100,
-            connection_pool_size=service_conn_workers,
-            max_requests_per_connection=8,
-        )
+        self.service_server = MicroserviceServer()
 
     @property
     def is_running(self) -> bool:

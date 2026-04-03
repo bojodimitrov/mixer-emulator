@@ -23,7 +23,7 @@ def format_errors(errors: Any, *, limit: int = 5) -> list[str]:
         if not isinstance(e, dict):
             continue
         src = str(e.get("source", "unknown"))
-        msg = str(e.get("message", ""))
+        msg = str(e.get("message", "")).strip() or "<no details>"
         lines.append(f"  [{src}] {msg}")
     return lines
 
@@ -75,7 +75,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
         text.set("\n".join(lines))
 
         if orchestrator.is_running:
-            root.after(2000, tick)
+            root.after(1000, tick)
         else:
             root.destroy()
 

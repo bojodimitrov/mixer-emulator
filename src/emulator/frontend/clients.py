@@ -22,7 +22,8 @@ class Corrupter:
         self,
         metrics_client: Any = None,
     ):
-        self.client = MicroserviceClient()
+        # Each frontend worker runs on one thread, so one persistent socket is enough.
+        self.client = MicroserviceClient(pool_size=1, retry_backoff_ms=5.0)
         self._metrics_client = metrics_client
 
     def run_once(
@@ -98,7 +99,8 @@ class Repairer:
     """Frontend client that sends GET requests and, on missing records, repairs via POST."""
 
     def __init__(self, metrics_client: Any = None):
-        self.client = MicroserviceClient()
+        # Keep one connection per worker to avoid excessive socket churn under load.
+        self.client = MicroserviceClient(pool_size=1, retry_backoff_ms=5.0)
         self._metrics_client = metrics_client
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:

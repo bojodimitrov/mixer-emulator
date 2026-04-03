@@ -17,7 +17,7 @@ class MicroserviceClient:
         timeout_sec: float = 10.0,
         pool_size: int = 8,
         max_retries: int = 20,
-        retry_backoff_ms: float = 100.0,
+        retry_backoff_ms: float = 5.0,
     ):
         from ..transport_layer.transport import TcpEndpoint
 

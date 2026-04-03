@@ -34,7 +34,7 @@ class RuntimeMetrics:
         self.service = Counter()
         self.client_corrupter = Counter()
         self.client_repairer = Counter()
-        self._recent_errors: Deque[ErrorEvent] = deque(maxlen=200)
+        self._recent_errors: Deque[ErrorEvent] = deque(maxlen=5000)
 
     def record_db(self, ok: bool, latency_ms: float) -> None:
         self._record(self.db, ok, latency_ms)

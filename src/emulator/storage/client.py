@@ -19,6 +19,7 @@ class DbClient:
         self,
         timeout_sec: float = 10.0,
         pool_size: int = 0,
+        eager_connect: bool = True,
     ):
         self.endpoint = TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port))
         self.timeout_sec = float(timeout_sec)
@@ -29,6 +30,7 @@ class DbClient:
         if pool_size < 0:
             raise ValueError("pool_size must be >= 0")
         self.pool_size = int(pool_size)
+        self.eager_connect = bool(eager_connect)
 
         self._pool: Optional[queue.LifoQueue[socket.socket]] = None
         self._pool_lock = threading.Lock()
@@ -38,11 +40,12 @@ class DbClient:
 
             # Eagerly create half the pool to reduce first-request connect overhead,
             # without paying the cost of creating the full pool up-front.
-            eager = max(0, self.pool_size // 2)
-            for _ in range(eager):
-                s = self.endpoint.connect(timeout_sec=self.timeout_sec)
-                self._created += 1
-                self._pool.put_nowait(s)
+            if self.eager_connect:
+                eager = max(0, self.pool_size // 2)
+                for _ in range(eager):
+                    s = self.endpoint.connect(timeout_sec=self.timeout_sec)
+                    self._created += 1
+                    self._pool.put_nowait(s)
 
     def close(self) -> None:
         pool = self._pool
@@ -71,8 +74,9 @@ class DbClient:
 
         with self._pool_lock:
             if self._created < self.pool_size:
+                sock = self.endpoint.connect(timeout_sec=self.timeout_sec)
                 self._created += 1
-                return self.endpoint.connect(timeout_sec=self.timeout_sec)
+                return sock
 
         # Pool is at capacity; wait for a socket to be returned.
         return pool.get(timeout=self.timeout_sec)

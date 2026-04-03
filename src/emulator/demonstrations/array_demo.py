@@ -37,9 +37,7 @@ def run_demo(*, seed: int | None = None) -> None:
     db_server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
     db_server.start()
 
-    svc_server = MicroserviceServer(
-        latency_ms=0,
-    )
+    svc_server = MicroserviceServer()
     svc_server.start()
 
     try:

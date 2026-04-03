@@ -1,6 +1,7 @@
 import random
 import time
 import queue
+from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, Tuple, Type
 
@@ -70,6 +71,7 @@ class Microservice:
             thread_name_prefix="microservice",
         )
         self._is_shutdown = False
+        self._controllers: list[Api] = []
         self.api = self._build_discovered_api()
 
     @staticmethod
@@ -80,6 +82,7 @@ class Microservice:
 
     def _build_discovered_api(self) -> Api:
         aggregate = Api()
+        self._controllers.clear()
 
         for api_cls in self._iter_api_subclasses(Api):
             try:
@@ -92,6 +95,7 @@ class Microservice:
                 Api.__init__(controller)
 
             controller.register_routes()
+            self._controllers.append(controller)
             for key, handler in controller._routes.items():
                 if key in aggregate._routes:
                     method, path = key
@@ -114,21 +118,22 @@ class Microservice:
             delay = self.latency + jitter_sec
             time.sleep(max(0.0, delay))
 
+    def handle(self, method: str, path: str, payload: Dict[str, Any]) -> Any:
+        key = (str(method).upper(), self.api._normalize_path(path))
+        handler = self.api._routes.get(key)
+
+        if handler is None:
+            if not any(m == key[0] for m, _ in self.api._routes.keys()):
+                raise ValueError(f"unsupported method: {key[0]}")
+            raise ValueError(f"unsupported route: {key[0]} {key[1]}")
+
+        return handler(payload)
+
     def _process_request(self, req: Request) -> None:
         try:
             self._simulate_latency()
 
-            key = (req.method, self.api._normalize_path(req.path))
-            handler = self.api._routes.get(key)
-
-            if handler is None:
-                if not any(
-                    method == req.method for method, _ in self.api._routes.keys()
-                ):
-                    raise ValueError(f"unsupported method: {req.method}")
-                raise ValueError(f"unsupported route: {req.method} {key[1]}")
-
-            result = handler(req.payload)
+            result = self.handle(req.method, req.path, req.payload)
             req.reply_q.put({"status": "ok", "result": result})
 
         except Exception as exc:
@@ -144,6 +149,11 @@ class Microservice:
     def stop(self):
         self._is_shutdown = True
         self._executor.shutdown(wait=True)
+        for controller in self._controllers:
+            close_fn = getattr(controller, "close", None)
+            if callable(close_fn):
+                with suppress(Exception):
+                    close_fn()
 
 
 class CustomApi(Api):
@@ -151,7 +161,12 @@ class CustomApi(Api):
 
     def __init__(self):
         super().__init__()
-        self.db_client = DbClient()
+        # Service handlers are highly concurrent; keep a connection pool to avoid
+        # creating a fresh outbound DB socket for every single request.
+        self.db_client = DbClient(pool_size=128, eager_connect=False)
+
+    def close(self) -> None:
+        self.db_client.close()
 
     def register_routes(self) -> None:
         self.get("/hash")(self.get_by_hash)

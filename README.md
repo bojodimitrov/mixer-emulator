@@ -12,6 +12,15 @@ It includes:
 - A microservice layer (`MicroserviceServer`, `MicroserviceClient`) and frontend runners for corruption/repair flows
 - Writable B+ tree update path with rollback on index update failure
 
+## Problems that forced evolution
+
+Database Linear search -> sorted index
+Update and maintain index -> B+ tree index
+Scalability of database -> thread executor
+Cold starts -> thread pool ready to receive requests
+Multiple threads updating DB files -> Row-level locking and page level locking
+Connection churn (Only one usage of each socket address... is normally permitted) ->
+
 ## Project Structure
 
 ```

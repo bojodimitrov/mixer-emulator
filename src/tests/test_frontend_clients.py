@@ -23,10 +23,7 @@ class _SocketHarness:
         self.db_paths = create_seeded_temp_db(capacity=256, populate_end=256)
 
         self.db_server.start()
-        self.svc_server = MicroserviceServer(
-            latency_ms=0,
-            pool_size=10,
-        )
+        self.svc_server = MicroserviceServer()
         self.svc_server.start()
         return self
 
