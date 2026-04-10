@@ -6,6 +6,7 @@ from typing import List
 
 from emulator.frontend.clients import Corrupter, Repairer
 from emulator.metrics.collector import MetricsCollectorClient, MetricsCollectorServer
+from emulator.microservice.client import MicroserviceClient
 from emulator.microservice.server import MicroserviceServer
 from emulator.storage.server import DbServer
 from emulator.storage.orchestrator import LookupStrategy
@@ -36,6 +37,20 @@ class SystemOrchestrator:
             lookup_strategy=db_lookup_strategy,
         )
         self.service_server = MicroserviceServer()
+        # Share bounded microservice connection pools across worker threads so
+        # high logical client counts do not translate to unbounded socket fan-out.
+        self._corrupter_client = MicroserviceClient(
+            pool_size=192,
+            retry_backoff_ms=5.0,
+            max_inflight_global=None,
+            inflight_group="corrupter",
+        )
+        self._repairer_client = MicroserviceClient(
+            pool_size=192,
+            retry_backoff_ms=5.0,
+            max_inflight_global=None,
+            inflight_group="repairer",
+        )
 
     @property
     def is_running(self) -> bool:
@@ -78,11 +93,15 @@ class SystemOrchestrator:
             self.db_server.close()
         with suppress(Exception):
             self.metrics_server.close()
+        with suppress(Exception):
+            self._corrupter_client.close()
+        with suppress(Exception):
+            self._repairer_client.close()
 
     def _run_corrupter(self) -> None:
-        client = Corrupter(metrics_client=self.metrics)
+        client = Corrupter(metrics_client=self.metrics, client=self._corrupter_client)
         client.run_loop(pause_ms=self._client_pause_ms, cancel_token=self._stop_event)
 
     def _run_repairer(self) -> None:
-        client = Repairer(metrics_client=self.metrics)
+        client = Repairer(metrics_client=self.metrics, client=self._repairer_client)
         client.run_loop(pause_ms=self._client_pause_ms, cancel_token=self._stop_event)

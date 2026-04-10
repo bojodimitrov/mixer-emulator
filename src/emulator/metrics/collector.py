@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from .runtime_metrics import RuntimeMetrics
 from ..servers_config import METRICS_ENDPOINT
-from ..transport_layer.selector_json_server import SelectorJsonServer
+from ..transport_layer.tcp_server_base import TcpServerBase
 from ..transport_layer.transport import recv_message, send_message
 
 
@@ -62,6 +62,19 @@ class MetricsCollectorClient:
         }
         # Errors are prioritized over normal records via lower priority value.
         self._work_queue.put((0, self._next_seq(), msg))
+
+    def record_transient(self, source: str, message: str, count: int = 1) -> None:
+        if self._stop_event.is_set():
+            return
+
+        msg = {
+            "op": "transient",
+            "source": str(source),
+            "message": str(message),
+            "count": max(1, int(count)),
+        }
+        # Keep transients below hard errors, but above normal latency records.
+        self._work_queue.put((1, self._next_seq(), msg))
 
     def close(self) -> None:
         self._stop_event.set()
@@ -160,13 +173,14 @@ class MetricsCollectorClient:
         return data
 
 
-class MetricsCollectorServer(SelectorJsonServer):
+class MetricsCollectorServer(TcpServerBase):
     def __init__(self) -> None:
         self._metrics = RuntimeMetrics()
         super().__init__(
             host=METRICS_ENDPOINT.host,
             port=int(METRICS_ENDPOINT.port),
             max_connections=64,
+            listen_backlog=128,
             worker_pool_size=16,
             accept_timeout_sec=1.0,
             conn_timeout_sec=10.0,
@@ -201,6 +215,15 @@ class MetricsCollectorServer(SelectorJsonServer):
             if not isinstance(source, str) or not isinstance(message, str):
                 raise ValueError("error requires 'source' and 'message' strings")
             self._metrics.record_error(source, message)
+            return {"status": "ok", "result": True}
+
+        if op == "transient":
+            source = msg.get("source")
+            message = msg.get("message")
+            count = int(msg.get("count") or 1)
+            if not isinstance(source, str) or not isinstance(message, str):
+                raise ValueError("transient requires 'source' and 'message' strings")
+            self._metrics.record_transient(source, message, count=max(1, count))
             return {"status": "ok", "result": True}
 
         if op == "snapshot":

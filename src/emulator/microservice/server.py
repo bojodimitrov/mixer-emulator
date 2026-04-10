@@ -1,19 +1,32 @@
+from dataclasses import dataclass
 from typing import Any, Dict
 
 from ..metrics.collector import MetricsCollectorClient
 from ..servers_config import SERVICE_ENDPOINT
-from ..transport_layer.selector_json_server import (
+from ..transport_layer.tcp_server_base import (
     ConnState,
-    SelectorJsonServer,
+    TcpServerBase,
     _exc_to_message,
 )
 from .framework import Microservice
 
 
-class MicroserviceServer(SelectorJsonServer):
+@dataclass
+class _MicroserviceConnState(ConnState):
+    handled: int = 0
+
+
+class MicroserviceServer(TcpServerBase):
     """TCP server that exposes the existing Microservice API."""
 
-    def __init__(self, *, latency_ms: int = 15, pool_size: int = 128):
+    def __init__(
+        self,
+        *,
+        latency_ms: int = 15,
+        pool_size: int = 128,
+        max_connections: int = 480,
+        listen_backlog: int = 1024,
+    ):
         self._service = Microservice(latency_ms=latency_ms, pool_size=pool_size)
         self._metrics_client = MetricsCollectorClient()
         self.max_requests_per_connection = 256
@@ -21,7 +34,8 @@ class MicroserviceServer(SelectorJsonServer):
         super().__init__(
             host=str(SERVICE_ENDPOINT.host),
             port=int(SERVICE_ENDPOINT.port),
-            max_connections=128,
+            max_connections=max_connections,
+            listen_backlog=listen_backlog,
             worker_pool_size=128,
             accept_timeout_sec=1.0,
             conn_timeout_sec=10.0,
@@ -32,11 +46,17 @@ class MicroserviceServer(SelectorJsonServer):
     def _request_context(self, msg: Dict[str, Any]) -> str:
         return f"method={msg.get('method')} path={msg.get('path')}"
 
+    def _make_conn_state(self) -> ConnState:
+        return _MicroserviceConnState()
+
     def _on_completion(self, state: ConnState, reply: Dict[str, Any]) -> None:
-        state.handled += 1
+        if isinstance(state, _MicroserviceConnState):
+            state.handled += 1
 
     def _close_after_response(self, state: ConnState, reply: Dict[str, Any]) -> bool:
-        return state.handled >= self.max_requests_per_connection
+        if isinstance(state, _MicroserviceConnState):
+            return state.handled >= self.max_requests_per_connection
+        return False
 
     def _on_close(self) -> None:
         self._metrics_client.close()

@@ -26,6 +26,14 @@ class ErrorEvent:
     message: str
 
 
+@dataclass
+class TransientEvent:
+    ts_sec: float
+    source: str
+    message: str
+    count: int
+
+
 class RuntimeMetrics:
     def __init__(self) -> None:
         self.started_at = now()
@@ -35,6 +43,15 @@ class RuntimeMetrics:
         self.client_corrupter = Counter()
         self.client_repairer = Counter()
         self._recent_errors: Deque[ErrorEvent] = deque(maxlen=5000)
+        self._recent_transients: Deque[TransientEvent] = deque(maxlen=5000)
+        self._transient_counts: Dict[str, int] = {
+            "corrupter": 0,
+            "repairer": 0,
+            "service": 0,
+            "db": 0,
+            "metrics": 0,
+            "other": 0,
+        }
 
     def record_db(self, ok: bool, latency_ms: float) -> None:
         self._record(self.db, ok, latency_ms)
@@ -50,6 +67,25 @@ class RuntimeMetrics:
         with self._lock:
             self._recent_errors.append(
                 ErrorEvent(ts_sec=now(), source=str(source), message=str(message))
+            )
+
+    def record_transient(self, source: str, message: str, count: int = 1) -> None:
+        normalized_source = str(source)
+        bucket = (
+            normalized_source
+            if normalized_source in self._transient_counts
+            else "other"
+        )
+        safe_count = max(1, int(count))
+        with self._lock:
+            self._transient_counts[bucket] += safe_count
+            self._recent_transients.append(
+                TransientEvent(
+                    ts_sec=now(),
+                    source=normalized_source,
+                    message=str(message),
+                    count=safe_count,
+                )
             )
 
     def _record(self, counter: Counter, ok: bool, latency_ms: float) -> None:
@@ -78,6 +114,18 @@ class RuntimeMetrics:
                     }
                     for e in list(self._recent_errors)
                 ],
+                "transient": {
+                    "counts": dict(self._transient_counts),
+                    "recent": [
+                        {
+                            "ts_sec": e.ts_sec,
+                            "source": e.source,
+                            "message": e.message,
+                            "count": e.count,
+                        }
+                        for e in list(self._recent_transients)
+                    ],
+                },
             }
 
     @staticmethod

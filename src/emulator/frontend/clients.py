@@ -15,15 +15,35 @@ def _random_name() -> str:
     return "".join(random.choice(string.ascii_lowercase) for _ in range(5))
 
 
+def _is_transient_service_pressure(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "retries exhausted" in text
+        or "throttled by inflight gate" in text
+        or "timed out" in text
+    )
+
+
 class Corrupter:
     """Frontend client that sends POST requests to corrupt records."""
 
     def __init__(
         self,
         metrics_client: Any = None,
+        client: Optional[MicroserviceClient] = None,
     ):
-        # Each frontend worker runs on one thread, so one persistent socket is enough.
-        self.client = MicroserviceClient(pool_size=1, retry_backoff_ms=5.0)
+        # Allow orchestrators to inject a shared, thread-safe client instance.
+        if client is None:
+            self.client = MicroserviceClient(
+                pool_size=1,
+                retry_backoff_ms=5.0,
+                max_inflight_global=192,
+                inflight_group="corrupter",
+            )
+            self._owns_client = True
+        else:
+            self.client = client
+            self._owns_client = False
         self._metrics_client = metrics_client
 
     def run_once(
@@ -75,13 +95,38 @@ class Corrupter:
         cancel_token: Any = None,
     ) -> None:
         cancellation = LoopCancellation(cancel_token)
+        consecutive_transient_failures = 0
+        pending_transient_events = 0
+
+        def _flush_transients() -> None:
+            nonlocal pending_transient_events
+            if pending_transient_events <= 0 or self._metrics_client is None:
+                return
+            self._metrics_client.record_transient(
+                "corrupter",
+                "frontend request pressure",
+                pending_transient_events,
+            )
+            pending_transient_events = 0
+
         if seed is not None:
             random.seed(int(seed))
         try:
             while not cancellation.is_cancelled():
                 try:
                     self.run_once(record_id=record_id, new_name=new_name)
+                    _flush_transients()
+                    consecutive_transient_failures = 0
                 except Exception as exc:
+                    if _is_transient_service_pressure(exc):
+                        consecutive_transient_failures += 1
+                        pending_transient_events += 1
+                        if pending_transient_events >= 25:
+                            _flush_transients()
+                        if cancellation.pause_or_cancel(0.05):
+                            break
+                        continue
+                    _flush_transients()
                     if self._metrics_client is not None:
                         self._metrics_client.record_error("corrupter", str(exc))
                     print(f"[corrupter] stopping after request failure: {exc}")
@@ -92,15 +137,30 @@ class Corrupter:
         except KeyboardInterrupt:
             return
         finally:
-            self.client.close()
+            _flush_transients()
+            if self._owns_client:
+                self.client.close()
 
 
 class Repairer:
     """Frontend client that sends GET requests and, on missing records, repairs via POST."""
 
-    def __init__(self, metrics_client: Any = None):
-        # Keep one connection per worker to avoid excessive socket churn under load.
-        self.client = MicroserviceClient(pool_size=1, retry_backoff_ms=5.0)
+    def __init__(
+        self,
+        metrics_client: Any = None,
+        client: Optional[MicroserviceClient] = None,
+    ):
+        if client is None:
+            self.client = MicroserviceClient(
+                pool_size=1,
+                retry_backoff_ms=5.0,
+                max_inflight_global=192,
+                inflight_group="repairer",
+            )
+            self._owns_client = True
+        else:
+            self.client = client
+            self._owns_client = False
         self._metrics_client = metrics_client
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:
@@ -155,6 +215,20 @@ class Repairer:
         cancel_token: Any = None,
     ) -> None:
         cancellation = LoopCancellation(cancel_token)
+        consecutive_transient_failures = 0
+        pending_transient_events = 0
+
+        def _flush_transients() -> None:
+            nonlocal pending_transient_events
+            if pending_transient_events <= 0 or self._metrics_client is None:
+                return
+            self._metrics_client.record_transient(
+                "repairer",
+                "frontend request pressure",
+                pending_transient_events,
+            )
+            pending_transient_events = 0
+
         if seed is not None:
             random.seed(int(seed))
 
@@ -162,7 +236,18 @@ class Repairer:
             while not cancellation.is_cancelled():
                 try:
                     self.run_once(record_id=record_id)
+                    _flush_transients()
+                    consecutive_transient_failures = 0
                 except Exception as exc:
+                    if _is_transient_service_pressure(exc):
+                        consecutive_transient_failures += 1
+                        pending_transient_events += 1
+                        if pending_transient_events >= 25:
+                            _flush_transients()
+                        if cancellation.pause_or_cancel(0.05):
+                            break
+                        continue
+                    _flush_transients()
                     if self._metrics_client is not None:
                         self._metrics_client.record_error("repairer", str(exc))
                     print(f"[repairer] stopping after request failure: {exc}")
@@ -173,4 +258,6 @@ class Repairer:
         except KeyboardInterrupt:
             return
         finally:
-            self.client.close()
+            _flush_transients()
+            if self._owns_client:
+                self.client.close()

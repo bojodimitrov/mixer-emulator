@@ -13,6 +13,22 @@ from emulator.microservice.server import (
 from emulator.utils import compute_hash_for, id_to_name
 
 
+class _FakeSocket:
+    def __init__(self):
+        self._fileno = 123
+        self.closed = False
+
+    def fileno(self):
+        return self._fileno
+
+    def close(self):
+        self.closed = True
+        self._fileno = -1
+
+    def settimeout(self, _timeout):
+        return None
+
+
 class TestSocketDecoupling(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -107,6 +123,31 @@ class TestSocketDecoupling(unittest.TestCase):
         pool = client._pool
         assert pool is not None
         self.assertEqual(pool.qsize(), 1)
+
+
+class TestMicroserviceClientPoolAging(unittest.TestCase):
+    def test_pool_recycles_socket_past_idle_timeout(self):
+        client = MicroserviceClient(pool_size=1, max_idle_sec=0.01)
+        self.addCleanup(client.close)
+
+        stale = _FakeSocket()
+        fresh = _FakeSocket()
+        assert client._pool is not None
+
+        now = time.monotonic()
+        client._created = 1
+        client._socket_timestamps[id(stale)] = (now - 1.0, now - 0.1)
+        client._pool.put_nowait(stale)  # type: ignore[arg-type]
+
+        with patch(
+            "emulator.transport_layer.transport.TcpEndpoint.connect",
+            return_value=fresh,
+        ):
+            got = client._pool_acquire()
+
+        self.assertIs(got, fresh)
+        self.assertTrue(stale.closed)
+        self.assertEqual(client._created, 1)
 
 
 if __name__ == "__main__":

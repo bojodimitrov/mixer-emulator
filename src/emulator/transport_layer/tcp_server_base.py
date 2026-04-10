@@ -1,4 +1,5 @@
 import json
+import os
 import queue
 import selectors
 import socket
@@ -17,6 +18,13 @@ from .transport import ProtocolError
 _LEN_STRUCT = struct.Struct(">I")
 _MAX_MESSAGE_BYTES = 10 * 1024 * 1024
 _WAKEUP_TOKEN = "__wakeup__"
+_DEFAULT_MAX_IN_BUFFER_BYTES = 4 * _MAX_MESSAGE_BYTES
+_DEFAULT_MAX_PENDING_REQUESTS_PER_CONNECTION = 256
+_DEFAULT_MAX_QUEUED_OUTPUT_BYTES_PER_CONNECTION = 4 * 1024 * 1024
+_DEFAULT_COMPLETION_QUEUE_MAXSIZE = 1024
+_DEFAULT_RETRY_AFTER_MS = 250
+_WINDOWS_SELECT_FD_LIMIT = 512
+_WINDOWS_SELECT_RESERVED_FDS = 32
 
 
 def _exc_to_message(exc: Exception) -> str:
@@ -30,20 +38,22 @@ def _exc_to_message(exc: Exception) -> str:
 class ConnState:
     in_buffer: bytearray = field(default_factory=bytearray)
     out_chunks: Deque[bytes] = field(default_factory=deque)
+    queued_output_bytes: int = 0
     pending_requests: Deque[Dict[str, Any]] = field(default_factory=deque)
     in_flight: bool = False
-    handled: int = 0
+    close_requested: bool = False
     close_after_write: bool = False
     last_activity: float = field(default_factory=time.monotonic)
 
 
-class SelectorJsonServer(ABC):
+class TcpServerBase(ABC):
     def __init__(
         self,
         *,
         host: str,
         port: int,
         max_connections: int,
+        listen_backlog: Optional[int] = None,
         worker_pool_size: int,
         accept_timeout_sec: float,
         conn_timeout_sec: float,
@@ -54,10 +64,45 @@ class SelectorJsonServer(ABC):
         self.port = int(port)
         self.accept_timeout_sec = float(accept_timeout_sec)
         self.conn_timeout_sec = float(conn_timeout_sec)
-        self.max_connections = int(max_connections)
+        requested_max_connections = int(max_connections)
+        self.max_connections = requested_max_connections
+        self._max_connections_was_clamped = False
+        self._requested_max_connections = requested_max_connections
+        if self.max_connections <= 0:
+            raise ValueError("max_connections must be positive")
+
+        # Windows SelectSelector is limited by FD_SETSIZE (typically 512).
+        # Keep headroom for listen/wakeup sockets and transient bookkeeping.
+        if os.name == "nt":
+            safe_max_connections = max(
+                1,
+                _WINDOWS_SELECT_FD_LIMIT - _WINDOWS_SELECT_RESERVED_FDS,
+            )
+            if self.max_connections > safe_max_connections:
+                self.max_connections = safe_max_connections
+                self._max_connections_was_clamped = True
+
+        if listen_backlog is None:
+            self.listen_backlog = self.max_connections
+        else:
+            self.listen_backlog = int(listen_backlog)
+        if self.listen_backlog <= 0:
+            raise ValueError("listen_backlog must be positive")
+
         self.worker_pool_size = int(worker_pool_size)
         self._thread_name = thread_name
         self._worker_thread_prefix = worker_thread_prefix
+        self.max_in_buffer_bytes_per_connection = _DEFAULT_MAX_IN_BUFFER_BYTES
+        self.max_pending_requests_per_connection = (
+            _DEFAULT_MAX_PENDING_REQUESTS_PER_CONNECTION
+        )
+        self.max_queued_output_bytes_per_connection = (
+            _DEFAULT_MAX_QUEUED_OUTPUT_BYTES_PER_CONNECTION
+        )
+        self.completion_queue_maxsize = max(
+            _DEFAULT_COMPLETION_QUEUE_MAXSIZE,
+            self.worker_pool_size * 8,
+        )
 
         self._socket: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
@@ -67,8 +112,10 @@ class SelectorJsonServer(ABC):
         self._wakeup_reader: Optional[socket.socket] = None
         self._wakeup_writer: Optional[socket.socket] = None
         self._completion_q: queue.Queue[Tuple[socket.socket, Dict[str, Any], float]] = (
-            queue.Queue()
+            queue.Queue(maxsize=self.completion_queue_maxsize)
         )
+        self._completion_overflow: set[socket.socket] = set()
+        self._completion_overflow_lock = threading.Lock()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -85,12 +132,18 @@ class SelectorJsonServer(ABC):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind((self.host, self.port))
-        self._socket.listen(self.max_connections)
+        self._socket.listen(self.listen_backlog)
         self._socket.setblocking(False)
 
         self._selector = selectors.DefaultSelector()
         self._selector.register(self._socket, selectors.EVENT_READ, data=None)
         self._create_wakeup_channel()
+
+        if self._max_connections_was_clamped:
+            self._record_error(
+                "max_connections clamped for Windows select() limit: "
+                f"requested={self._requested_max_connections}, effective={self.max_connections}"
+            )
 
         self._stop_event.clear()
         self._thread = threading.Thread(
@@ -106,6 +159,12 @@ class SelectorJsonServer(ABC):
 
         if self._thread:
             self._thread.join(timeout=2)
+            if self._thread.is_alive():
+                self._record_error(
+                    "server thread did not stop cleanly; deferring resource teardown"
+                )
+                return
+            self._thread = None
 
         self._close_wakeup_channel()
 
@@ -145,6 +204,13 @@ class SelectorJsonServer(ABC):
                 if not self._stop_event.is_set():
                     self._record_error(f"selector loop failed: {_exc_to_message(exc)}")
                 break
+            except ValueError as exc:
+                if not self._stop_event.is_set():
+                    self._record_error(
+                        "selector loop failed due to descriptor limit: "
+                        f"{_exc_to_message(exc)}"
+                    )
+                break
 
             for key, mask in events:
                 if key.data is None:
@@ -183,12 +249,24 @@ class SelectorJsonServer(ABC):
                 return
 
             conn.setblocking(False)
+            if self._active_connection_count() >= self.max_connections:
+                try:
+                    conn.close()
+                except OSError as exc:
+                    self._record_error(
+                        f"failed to close excess connection: {_exc_to_message(exc)}"
+                    )
+                continue
+
             self._on_connection_accepted(conn)
             self._selector.register(
                 conn, selectors.EVENT_READ, data=self._make_conn_state()
             )
 
     def _read_from_connection(self, conn: socket.socket, state: ConnState) -> None:
+        if state.close_requested or state.close_after_write:
+            return
+
         while not self._stop_event.is_set():
             try:
                 chunk = conn.recv(65536)
@@ -207,22 +285,59 @@ class SelectorJsonServer(ABC):
 
             state.last_activity = time.monotonic()
             state.in_buffer.extend(chunk)
+            if len(state.in_buffer) > self.max_in_buffer_bytes_per_connection:
+                self._record_error(
+                    "closing connection due to oversized buffered input: "
+                    f"{len(state.in_buffer)} bytes"
+                )
+                state.in_buffer.clear()
+                self._queue_overload_response(
+                    conn,
+                    state,
+                    "request buffer limit exceeded",
+                    close_after=True,
+                )
+                return
 
             try:
                 messages = self._extract_messages(state)
             except ProtocolError as exc:
                 self._record_error(f"protocol error while reading request: {str(exc)}")
+                state.in_buffer.clear()
                 self._queue_response(
-                    conn, state, {"status": "error", "error": str(exc)}
+                    conn,
+                    state,
+                    {"status": "error", "error": str(exc)},
+                    close_after=True,
                 )
-                continue
+                return
 
             for message in messages:
                 if message.get("op") == "Close":
-                    self._queue_response(
+                    state.close_requested = True
+                    state.pending_requests.clear()
+                    state.in_buffer.clear()
+                    if not state.in_flight:
+                        self._queue_response(
+                            conn,
+                            state,
+                            {"status": "ok", "result": True},
+                            close_after=True,
+                        )
+                    return
+
+                outstanding = len(state.pending_requests) + (
+                    1 if state.in_flight else 0
+                )
+                if outstanding >= self.max_pending_requests_per_connection:
+                    self._record_error(
+                        "closing connection due to outstanding request limit: "
+                        f"{outstanding}"
+                    )
+                    self._queue_overload_response(
                         conn,
                         state,
-                        {"status": "ok", "result": True},
+                        "too many outstanding requests",
                         close_after=True,
                     )
                     return
@@ -246,6 +361,7 @@ class SelectorJsonServer(ABC):
                 return
 
             state.last_activity = time.monotonic()
+            state.queued_output_bytes -= sent
             if sent < len(payload):
                 state.out_chunks[0] = payload[sent:]
                 self._set_conn_events(conn, state)
@@ -309,7 +425,19 @@ class SelectorJsonServer(ABC):
                 )
                 return {"status": "error", "error": error_message}
 
-        future = self._executor.submit(_run_request)
+        try:
+            future = self._executor.submit(_run_request)
+        except Exception as exc:
+            state.in_flight = False
+            error_message = _exc_to_message(exc)
+            self._record_error(f"failed to submit request: {error_message}")
+            self._queue_response(
+                conn,
+                state,
+                {"status": "error", "error": error_message},
+                close_after=True,
+            )
+            return
 
         def _on_done(done_future) -> None:
             try:
@@ -320,12 +448,33 @@ class SelectorJsonServer(ABC):
                     f"request future failed unexpectedly: {error_message}"
                 )
                 reply = {"status": "error", "error": error_message}
-            self._completion_q.put((conn, reply, started))
+            try:
+                self._completion_q.put_nowait((conn, reply, started))
+            except queue.Full:
+                self._record_error(
+                    "completion queue is full; marking connection for overload response"
+                )
+                self._mark_completion_overflow(conn)
             self._signal_wakeup()
 
         future.add_done_callback(_on_done)
 
     def _drain_completions(self) -> None:
+        for conn in self._take_completion_overflow_connections():
+            state = self._get_conn_state(conn)
+            if state is None:
+                continue
+
+            state.in_flight = False
+            state.pending_requests.clear()
+            state.in_buffer.clear()
+            self._queue_overload_response(
+                conn,
+                state,
+                "server is overloaded",
+                close_after=True,
+            )
+
         while True:
             try:
                 conn, reply, started = self._completion_q.get_nowait()
@@ -345,6 +494,15 @@ class SelectorJsonServer(ABC):
                 reply,
                 close_after=self._close_after_response(state, reply),
             )
+            if state.close_requested:
+                state.pending_requests.clear()
+                self._queue_response(
+                    conn,
+                    state,
+                    {"status": "ok", "result": True},
+                    close_after=True,
+                )
+                continue
             self._dispatch_next_request(conn, state)
 
     def _queue_response(
@@ -363,12 +521,55 @@ class SelectorJsonServer(ABC):
             )
             encoded = b'{"status":"error","error":"invalid response"}'
 
-        state.out_chunks.append(_LEN_STRUCT.pack(len(encoded)) + encoded)
+        framed = _LEN_STRUCT.pack(len(encoded)) + encoded
+        projected = state.queued_output_bytes + len(framed)
+        if projected > self.max_queued_output_bytes_per_connection:
+            self._record_error(
+                "closing connection due to queued output limit: " f"{projected} bytes"
+            )
+            state.out_chunks.clear()
+            state.queued_output_bytes = 0
+            self._close_connection(conn)
+            return
+
+        state.out_chunks.append(framed)
+        state.queued_output_bytes = projected
         if close_after:
             state.close_after_write = True
 
         state.last_activity = time.monotonic()
         self._set_conn_events(conn, state)
+
+    def _queue_overload_response(
+        self,
+        conn: socket.socket,
+        state: ConnState,
+        detail: str,
+        *,
+        close_after: bool,
+    ) -> None:
+        self._queue_response(
+            conn,
+            state,
+            {
+                "status": "error",
+                "code": 429,
+                "error": "too many requests",
+                "detail": detail,
+                "retry_after_ms": _DEFAULT_RETRY_AFTER_MS,
+            },
+            close_after=close_after,
+        )
+
+    def _mark_completion_overflow(self, conn: socket.socket) -> None:
+        with self._completion_overflow_lock:
+            self._completion_overflow.add(conn)
+
+    def _take_completion_overflow_connections(self) -> list[socket.socket]:
+        with self._completion_overflow_lock:
+            conns = list(self._completion_overflow)
+            self._completion_overflow.clear()
+        return conns
 
     def _set_conn_events(self, conn: socket.socket, state: ConnState) -> None:
         assert self._selector is not None
@@ -394,13 +595,22 @@ class SelectorJsonServer(ABC):
             if key.data is None or not isinstance(key.fileobj, socket.socket):
                 continue
             state = key.data
-            if isinstance(state, ConnState) and state.last_activity < cutoff:
+            if (
+                isinstance(state, ConnState)
+                and not state.in_flight
+                and not state.out_chunks
+                and not state.pending_requests
+                and state.last_activity < cutoff
+            ):
                 to_close.append(key.fileobj)
 
         for conn in to_close:
             self._close_connection(conn)
 
     def _close_connection(self, conn: socket.socket) -> None:
+        with self._completion_overflow_lock:
+            self._completion_overflow.discard(conn)
+
         if self._selector is None:
             return
 
@@ -480,11 +690,27 @@ class SelectorJsonServer(ABC):
             return
         try:
             self._wakeup_writer.send(b"\x00")
+        except BlockingIOError:
+            # The wakeup socket is already full, which implies the selector
+            # will wake soon anyway.
+            return
         except OSError as exc:
             if not self._stop_event.is_set():
                 self._record_error(
                     f"failed to signal wakeup channel: {_exc_to_message(exc)}"
                 )
+
+    def _active_connection_count(self) -> int:
+        if self._selector is None:
+            return 0
+
+        active = 0
+        for key in self._selector.get_map().values():
+            if isinstance(key.fileobj, socket.socket) and isinstance(
+                key.data, ConnState
+            ):
+                active += 1
+        return active
 
     def _drain_wakeup_channel(self) -> None:
         if self._wakeup_reader is None:

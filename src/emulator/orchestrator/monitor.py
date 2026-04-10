@@ -28,6 +28,30 @@ def format_errors(errors: Any, *, limit: int = 5) -> list[str]:
     return lines
 
 
+def format_transients(transient: Any) -> list[str]:
+    if not isinstance(transient, dict):
+        return ["transient: none"]
+
+    counts = transient.get("counts")
+    if not isinstance(counts, dict):
+        return ["transient: none"]
+
+    c = int(counts.get("corrupter", 0) or 0)
+    r = int(counts.get("repairer", 0) or 0)
+    s = int(counts.get("service", 0) or 0)
+    d = int(counts.get("db", 0) or 0)
+    m = int(counts.get("metrics", 0) or 0)
+    o = int(counts.get("other", 0) or 0)
+    total = c + r + s + d + m + o
+    if total == 0:
+        return ["transient: none"]
+
+    return [
+        "transient: "
+        f"total={total} corrupter={c} repairer={r} service={s} db={d} metrics={m} other={o}"
+    ]
+
+
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     try:
         import tkinter as tk
@@ -69,6 +93,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
             format_block("service", snap["service"]),
             format_block("corrupter", snap["corrupter"]),
             format_block("repairer", snap["repairer"]),
+            *format_transients(snap.get("transient")),
             *format_errors(snap.get("recent_errors")),
             "Close this window to stop all components.",
         ]
@@ -107,6 +132,8 @@ def run_headless_monitor(
                 + " | "
                 + format_block("repairer", snap["repairer"])
             )
+            for line in format_transients(snap.get("transient")):
+                print(line)
             for line in format_errors(snap.get("recent_errors"), limit=3):
                 print(line)
 

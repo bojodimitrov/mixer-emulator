@@ -3,15 +3,15 @@ from typing import Any, Dict
 
 from ..metrics.collector import MetricsCollectorClient
 from ..servers_config import DB_ENDPOINT
-from ..transport_layer.selector_json_server import (
-    SelectorJsonServer,
+from ..transport_layer.tcp_server_base import (
+    TcpServerBase,
     _exc_to_message,
 )
 from .engine import DbEngine
 from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
 
 
-class DbServer(SelectorJsonServer):
+class DbServer(TcpServerBase):
     """TCP wrapper around DbOrchestrator."""
 
     def __init__(
@@ -28,6 +28,7 @@ class DbServer(SelectorJsonServer):
             host=str(DB_ENDPOINT.host),
             port=int(DB_ENDPOINT.port),
             max_connections=128,
+            listen_backlog=256,
             worker_pool_size=32,
             accept_timeout_sec=1.0,
             conn_timeout_sec=10.0,
