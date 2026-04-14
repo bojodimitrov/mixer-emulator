@@ -19,9 +19,9 @@ class MicroserviceClient:
 
     def __init__(
         self,
-        timeout_sec: float = 10.0,
+        timeout_sec: float = 5.0,
         pool_size: int = 8,
-        max_retries: int = 20,
+        max_retries: int = 5,
         retry_backoff_ms: float = 5.0,
         max_idle_sec: Optional[float] = None,
         max_lifetime_sec: Optional[float] = None,
@@ -247,11 +247,14 @@ class MicroserviceClient:
                 sock: Optional[socket.socket] = None
                 try:
                     sock = self._pool_acquire()
+
                     send_message(sock, payload)
                     response = recv_message(sock)
+                    
                     if sock.fileno() != -1:
                         self._pool_release(sock)
                     return response
+                
                 except Exception as exc:
                     last_exc = exc
                     if sock is not None:

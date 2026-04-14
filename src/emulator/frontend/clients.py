@@ -67,6 +67,19 @@ class Corrupter:
             if new_name is None:
                 new_name = _random_name()
 
+            correct_name = id_to_name(record_id)
+            correct_hash = compute_hash_for(record_id, correct_name)
+            
+            get_response = self.client.request(
+                "GET", {"hash": hex_from_bytes(correct_hash)}, "/hash"
+            )
+            if (
+                get_response.get("status") == "ok"
+                and get_response.get("result") is None
+            ):
+                ok = True
+                return {"action": "ok", "id": record_id, "response": get_response}
+
             resp = self.client.request(
                 "POST", {"id": int(record_id), "new_name": str(new_name)}, "/name"
             )
@@ -236,8 +249,10 @@ class Repairer:
             while not cancellation.is_cancelled():
                 try:
                     self.run_once(record_id=record_id)
+
                     _flush_transients()
                     consecutive_transient_failures = 0
+
                 except Exception as exc:
                     if _is_transient_service_pressure(exc):
                         consecutive_transient_failures += 1
@@ -247,6 +262,7 @@ class Repairer:
                         if cancellation.pause_or_cancel(0.05):
                             break
                         continue
+                    
                     _flush_transients()
                     if self._metrics_client is not None:
                         self._metrics_client.record_error("repairer", str(exc))
