@@ -4,21 +4,31 @@ import queue
 import socket
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from typing import Any, Dict, Optional
 
 from .runtime_metrics import RuntimeMetrics
 from ..servers_config import METRICS_ENDPOINT
 from ..transport_layer.tcp_server_base import TcpServerBase
-from ..transport_layer.transport import recv_message, send_message
+from ..transport_layer.tcp_client import TcpClient
+from ..transport_layer.transport import TcpEndpoint, recv_message, send_message
 
 
-class MetricsCollectorClient:
+class MetricsCollectorClient(TcpClient):
     def __init__(self) -> None:
         self.host = str(METRICS_ENDPOINT.host)
         self.port = int(METRICS_ENDPOINT.port)
 
-        self.timeout_sec = 0.2
+        super().__init__(
+            endpoint=TcpEndpoint(self.host, self.port),
+            timeout_sec=0.2,
+            pool_size=0,
+            eager_connect=False,
+            max_retries=2,
+            retry_backoff_ms=50.0,
+            retry_unpooled=True,
+        )
+
         self._work_queue: queue.PriorityQueue[tuple[int, int, Any]] = (
             queue.PriorityQueue()
         )
@@ -88,23 +98,20 @@ class MetricsCollectorClient:
         if self._sender_thread.is_alive():
             self._sender_thread.join(timeout=1.0)
         self._drop_sender_socket()
+        super().close()
 
     def _drop_sender_socket(self) -> None:
         if self._sender_socket is None:
             return
-        try:
-            self._sender_socket.close()
-        except OSError:
-            pass
+        sock = self._sender_socket
         self._sender_socket = None
+        self._socket_timestamps.pop(id(sock), None)
+        with suppress(OSError):
+            sock.close()
 
     def _get_sender_socket(self) -> socket.socket:
         if self._sender_socket is None:
-            sock = socket.create_connection(
-                (self.host, self.port), timeout=self.timeout_sec
-            )
-            sock.settimeout(self.timeout_sec)
-            self._sender_socket = sock
+            self._sender_socket = self._new_socket()
         return self._sender_socket
 
     def _sender_loop(self) -> None:
@@ -141,28 +148,14 @@ class MetricsCollectorClient:
         return
 
     def _request_once(self, msg: Dict[str, Any]) -> Dict[str, Any]:
-        with socket.create_connection(
-            (self.host, self.port), timeout=self.timeout_sec
-        ) as sock:
-            sock.settimeout(self.timeout_sec)
-            send_message(sock, msg)
-            return recv_message(sock)
+        return self._request(msg)
 
     def snapshot(self) -> Dict[str, Any]:
         msg = {"op": "snapshot"}
-        last_exc: Optional[Exception] = None
-        resp: Dict[str, Any]
-        for attempt in range(3):
-            try:
-                resp = self._request_once(msg)
-                break
-            except OSError as exc:
-                last_exc = exc
-                if attempt < 2:
-                    time.sleep(0.05)
-                continue
-        else:
-            raise RuntimeError("metrics snapshot failed after retries") from last_exc
+        try:
+            resp = self._request_once(msg)
+        except OSError as exc:
+            raise RuntimeError("metrics snapshot failed after retries") from exc
 
         if resp.get("status") != "ok":
             raise RuntimeError(str(resp.get("error") or "metrics snapshot failed"))

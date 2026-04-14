@@ -33,15 +33,11 @@ class FrontendClient:
         self,
         metrics_client: Any = None,
         client: Optional[MicroserviceClient] = None,
-        *,
-        inflight_group: str,
     ):
         if client is None:
             self.client = MicroserviceClient(
                 pool_size=1,
                 retry_backoff_ms=5.0,
-                max_inflight_global=192,
-                inflight_group=inflight_group,
             )
             self._owns_client = True
         else:
@@ -153,7 +149,6 @@ class Corrupter(FrontendClient):
         super().__init__(
             metrics_client=metrics_client,
             client=client,
-            inflight_group=self.service_name,
         )
 
     def run_once(
@@ -235,7 +230,6 @@ class Repairer(FrontendClient):
         super().__init__(
             metrics_client=metrics_client,
             client=client,
-            inflight_group=self.service_name,
         )
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:

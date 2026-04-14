@@ -4,6 +4,7 @@ import struct
 import tempfile
 import time
 import json
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -212,6 +213,49 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
                     break
 
             self.assertTrue(saw_overload)
+
+    def test_server_returns_too_many_requests_when_global_backlog_overflows(self):
+        from emulator.transport_layer.transport import recv_message
+        from emulator.utils import compute_hash_for, id_to_name
+
+        self.db_server.max_pending_requests_per_connection = 32
+        self.db_server.max_pending_requests_global = 1
+
+        original_handle_request_message = self.db_server._handle_request_message
+        release_request = threading.Event()
+
+        def _delayed_handle_request_message(msg):
+            release_request.wait(timeout=1.0)
+            return original_handle_request_message(msg)
+
+        self.db_server._handle_request_message = _delayed_handle_request_message  # type: ignore[method-assign]
+        self.addCleanup(
+            setattr,
+            self.db_server,
+            "_handle_request_message",
+            original_handle_request_message,
+        )
+
+        record_id = 7
+        query_msg = {
+            "op": "Query",
+            "hash": compute_hash_for(record_id, id_to_name(record_id)).hex(),
+        }
+        encoded = json.dumps(query_msg, separators=(",", ":")).encode("utf-8")
+        frame = struct.pack(">I", len(encoded)) + encoded
+
+        with socket.create_connection(("127.0.0.1", self.db_port), timeout=1.0) as sock:
+            sock.settimeout(1.0)
+            sock.sendall(frame * 2)
+
+            overload = recv_message(sock)
+            self.assertEqual(overload.get("code"), 429, msg=str(overload))
+            self.assertIn(
+                "server backlog limit exceeded",
+                str(overload.get("detail", "")).lower(),
+            )
+
+            release_request.set()
 
 
 class TestDbClientPoolAging(unittest.TestCase):

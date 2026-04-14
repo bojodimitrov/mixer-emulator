@@ -42,14 +42,10 @@ class SystemOrchestrator:
         self._corrupter_client = MicroserviceClient(
             pool_size=192,
             retry_backoff_ms=5.0,
-            max_inflight_global=None,
-            inflight_group="corrupter",
         )
         self._repairer_client = MicroserviceClient(
             pool_size=192,
             retry_backoff_ms=5.0,
-            max_inflight_global=None,
-            inflight_group="repairer",
         )
 
     @property

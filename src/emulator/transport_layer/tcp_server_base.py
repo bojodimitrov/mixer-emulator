@@ -20,6 +20,7 @@ _MAX_MESSAGE_BYTES = 10 * 1024 * 1024
 _WAKEUP_TOKEN = "__wakeup__"
 _DEFAULT_MAX_IN_BUFFER_BYTES = 4 * _MAX_MESSAGE_BYTES
 _DEFAULT_MAX_PENDING_REQUESTS_PER_CONNECTION = 256
+_DEFAULT_GLOBAL_PENDING_REQUESTS_MULTIPLIER = 8
 _DEFAULT_MAX_QUEUED_OUTPUT_BYTES_PER_CONNECTION = 4 * 1024 * 1024
 _DEFAULT_COMPLETION_QUEUE_MAXSIZE = 1024
 _DEFAULT_RETRY_AFTER_MS = 250
@@ -96,6 +97,10 @@ class TcpServerBase(ABC):
         self.max_pending_requests_per_connection = (
             _DEFAULT_MAX_PENDING_REQUESTS_PER_CONNECTION
         )
+        self.max_pending_requests_global = max(
+            self.max_pending_requests_per_connection,
+            self.worker_pool_size * _DEFAULT_GLOBAL_PENDING_REQUESTS_MULTIPLIER,
+        )
         self.max_queued_output_bytes_per_connection = (
             _DEFAULT_MAX_QUEUED_OUTPUT_BYTES_PER_CONNECTION
         )
@@ -116,6 +121,7 @@ class TcpServerBase(ABC):
         )
         self._completion_overflow: set[socket.socket] = set()
         self._completion_overflow_lock = threading.Lock()
+        self._global_pending_requests = 0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -315,6 +321,7 @@ class TcpServerBase(ABC):
             for message in messages:
                 if message.get("op") == "Close":
                     state.close_requested = True
+                    self._release_global_pending_requests(len(state.pending_requests))
                     state.pending_requests.clear()
                     state.in_buffer.clear()
                     if not state.in_flight:
@@ -341,6 +348,19 @@ class TcpServerBase(ABC):
                         close_after=True,
                     )
                     return
+
+                if not self._try_acquire_global_pending_request_slot():
+                    self._record_error(
+                        "rejecting request due to global backlog limit: "
+                        f"limit={self.max_pending_requests_global}"
+                    )
+                    self._queue_overload_response(
+                        conn,
+                        state,
+                        "server backlog limit exceeded",
+                        close_after=False,
+                    )
+                    continue
 
                 state.pending_requests.append(message)
                 self._dispatch_next_request(conn, state)
@@ -429,6 +449,10 @@ class TcpServerBase(ABC):
             future = self._executor.submit(_run_request)
         except Exception as exc:
             state.in_flight = False
+            dropped_pending = len(state.pending_requests)
+            if dropped_pending:
+                state.pending_requests.clear()
+            self._release_global_pending_requests(1 + dropped_pending)
             error_message = _exc_to_message(exc)
             self._record_error(f"failed to submit request: {error_message}")
             self._queue_response(
@@ -465,6 +489,8 @@ class TcpServerBase(ABC):
             if state is None:
                 continue
 
+            dropped_pending = len(state.pending_requests)
+            self._release_global_pending_requests(1 + dropped_pending)
             state.in_flight = False
             state.pending_requests.clear()
             state.in_buffer.clear()
@@ -480,6 +506,8 @@ class TcpServerBase(ABC):
                 conn, reply, started = self._completion_q.get_nowait()
             except queue.Empty:
                 return
+
+            self._release_global_pending_requests(1)
 
             state = self._get_conn_state(conn)
             if state is None:
@@ -571,6 +599,19 @@ class TcpServerBase(ABC):
             self._completion_overflow.clear()
         return conns
 
+    def _try_acquire_global_pending_request_slot(self) -> bool:
+        if self.max_pending_requests_global <= 0:
+            return False
+        if self._global_pending_requests >= self.max_pending_requests_global:
+            return False
+        self._global_pending_requests += 1
+        return True
+
+    def _release_global_pending_requests(self, count: int) -> None:
+        if count <= 0:
+            return
+        self._global_pending_requests = max(0, self._global_pending_requests - count)
+
     def _set_conn_events(self, conn: socket.socket, state: ConnState) -> None:
         assert self._selector is not None
         events = selectors.EVENT_READ
@@ -613,6 +654,11 @@ class TcpServerBase(ABC):
 
         if self._selector is None:
             return
+
+        state = self._get_conn_state(conn)
+        if state is not None and state.pending_requests:
+            self._release_global_pending_requests(len(state.pending_requests))
+            state.pending_requests.clear()
 
         try:
             self._selector.unregister(conn)
