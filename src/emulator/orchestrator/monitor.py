@@ -68,6 +68,388 @@ def format_worker_instances(counts: Dict[str, Any]) -> str:
     )
 
 
+def _safe_int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
+
+
+def _build_monitor_lines(
+    orchestrator: SystemOrchestrator,
+    snap: Dict[str, Any],
+    corrupted_rows: int,
+    worker_instances: Dict[str, Any],
+) -> list[str]:
+    return [
+        "System Orchestrator",
+        f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
+        format_worker_instances(worker_instances),
+        format_corrupted_rows(corrupted_rows),
+        format_block("db", snap["db"]),
+        format_block("service", snap["service"]),
+        format_block("corrupter", snap["corrupter"]),
+        format_block("repairer", snap["repairer"]),
+        *format_transients(snap.get("transient")),
+        *format_errors(snap.get("recent_errors")),
+        "Close this window to stop all components.",
+    ]
+
+
+def _draw_rounded_rect(
+    canvas: Any,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    radius: int,
+    fill: str,
+    outline: str,
+    outline_width: int = 1,
+) -> None:
+    x2 = x + width
+    y2 = y + height
+    points = [
+        x + radius,
+        y,
+        x2 - radius,
+        y,
+        x2,
+        y,
+        x2,
+        y + radius,
+        x2,
+        y2 - radius,
+        x2,
+        y2,
+        x2 - radius,
+        y2,
+        x + radius,
+        y2,
+        x,
+        y2,
+        x,
+        y2 - radius,
+        x,
+        y + radius,
+        x,
+        y,
+    ]
+    canvas.create_polygon(
+        points,
+        smooth=True,
+        splinesteps=36,
+        fill=fill,
+        outline=outline,
+        width=outline_width,
+    )
+
+
+def _draw_group_node(
+    canvas: Any,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    title: str,
+    subtitle: str,
+    badge_text: str,
+    badge_caption: str,
+    accent: str,
+    body_lines: list[str],
+) -> None:
+    title_width = width - 88
+    body_width = width - 36
+    body_y = y + 72
+    line_spacing = 15
+
+    _draw_rounded_rect(
+        canvas,
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        radius=18,
+        fill="#ffffff",
+        outline="#dde5ef",
+        outline_width=1,
+    )
+    _draw_rounded_rect(
+        canvas,
+        x=x,
+        y=y,
+        width=width,
+        height=8,
+        radius=18,
+        fill=accent,
+        outline=accent,
+    )
+    canvas.create_text(
+        x + 18,
+        y + 26,
+        text=title,
+        anchor="w",
+        width=title_width,
+        font=("Avenir Next", 13, "bold"),
+        fill="#0f172a",
+    )
+    canvas.create_text(
+        x + 18,
+        y + 48,
+        text=subtitle,
+        anchor="w",
+        width=title_width,
+        font=("Avenir Next", 9),
+        fill="#5b6472",
+    )
+    canvas.create_oval(
+        x + width - 58,
+        y + 18,
+        x + width - 18,
+        y + 58,
+        fill="#f3f6fa",
+        outline="#d6dde8",
+    )
+    canvas.create_text(
+        x + width - 38,
+        y + 33,
+        text=badge_text,
+        font=("Avenir Next", 12, "bold"),
+        fill="#0f172a",
+    )
+    canvas.create_text(
+        x + width - 38,
+        y + 48,
+        text=badge_caption,
+        font=("Avenir Next", 7, "bold"),
+        fill="#64748b",
+    )
+
+    for index, line in enumerate(body_lines[:3]):
+        canvas.create_text(
+            x + 18,
+            body_y + index * line_spacing,
+            text=line,
+            anchor="w",
+            width=body_width,
+            font=("Menlo", 9),
+            fill="#334155",
+        )
+
+
+def _draw_arrow(
+    canvas: Any,
+    *,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    color: str,
+    dashed: bool = False,
+) -> None:
+    canvas.create_line(
+        start[0],
+        start[1],
+        end[0],
+        end[1],
+        fill=color,
+        width=2,
+        arrow="last",
+        smooth=True,
+        splinesteps=20,
+        dash=(8, 6) if dashed else (),
+    )
+
+
+def _draw_metrics_topology(
+    canvas: Any,
+    *,
+    snap: Dict[str, Any],
+    corrupted_rows: int,
+    worker_instances: Dict[str, Any],
+) -> None:
+    canvas.delete("all")
+    canvas.configure(bg="#f4f7fb")
+
+    canvas.create_text(
+        28,
+        24,
+        text="Live System Topology",
+        anchor="w",
+        font=("Avenir Next", 20, "bold"),
+        fill="#0f172a",
+    )
+    canvas.create_text(
+        28,
+        50,
+        text="Grouped instances, live counts, and request flow",
+        anchor="w",
+        font=("Avenir Next", 11),
+        fill="#64748b",
+    )
+
+    corrupter_counts = worker_instances.get("corrupter", {})
+    repairer_counts = worker_instances.get("repairer", {})
+    corrupter_running = _safe_int(corrupter_counts.get("running"))
+    corrupter_configured = _safe_int(corrupter_counts.get("configured"))
+    repairer_running = _safe_int(repairer_counts.get("running"))
+    repairer_configured = _safe_int(repairer_counts.get("configured"))
+
+    _draw_group_node(
+        canvas,
+        x=48,
+        y=112,
+        width=196,
+        height=132,
+        title="Corrupters",
+        subtitle="frontend workers",
+        badge_text=str(corrupter_running),
+        badge_caption="live",
+        accent="#e76f51",
+        body_lines=[
+            f"running    {corrupter_running}/{corrupter_configured}",
+            f"ops/s      {snap['corrupter']['ops_per_sec']:.2f}",
+            f"last       {snap['corrupter']['last_latency_ms']:.1f} ms",
+        ],
+    )
+    _draw_group_node(
+        canvas,
+        x=48,
+        y=268,
+        width=196,
+        height=132,
+        title="Repairers",
+        subtitle="frontend workers",
+        badge_text=str(repairer_running),
+        badge_caption="live",
+        accent="#2a9d8f",
+        body_lines=[
+            f"running    {repairer_running}/{repairer_configured}",
+            f"ops/s      {snap['repairer']['ops_per_sec']:.2f}",
+            f"last       {snap['repairer']['last_latency_ms']:.1f} ms",
+        ],
+    )
+    _draw_group_node(
+        canvas,
+        x=336,
+        y=188,
+        width=216,
+        height=136,
+        title="Microservice API",
+        subtitle="request routing",
+        badge_text="1",
+        badge_caption="node",
+        accent="#457b9d",
+        body_lines=[
+            f"ops/s      {snap['service']['ops_per_sec']:.2f}",
+            f"errors     {_safe_int(snap['service']['error'])}",
+            f"last       {snap['service']['last_latency_ms']:.1f} ms",
+        ],
+    )
+    _draw_group_node(
+        canvas,
+        x=652,
+        y=112,
+        width=216,
+        height=132,
+        title="Database",
+        subtitle="record store",
+        badge_text="1",
+        badge_caption="node",
+        accent="#264653",
+        body_lines=[
+            f"ops/s      {snap['db']['ops_per_sec']:.2f}",
+            f"errors     {_safe_int(snap['db']['error'])}",
+            f"last       {snap['db']['last_latency_ms']:.1f} ms",
+        ],
+    )
+    _draw_group_node(
+        canvas,
+        x=652,
+        y=268,
+        width=216,
+        height=132,
+        title="Corruption Cache",
+        subtitle="frontend-owned derived state",
+        badge_text="1",
+        badge_caption="node",
+        accent="#e9c46a",
+        body_lines=[
+            format_corrupted_rows(corrupted_rows),
+            "tracks frontend update events",
+            "shared across worker groups",
+        ],
+    )
+    _draw_group_node(
+        canvas,
+        x=338,
+        y=446,
+        width=284,
+        height=122,
+        title="Metrics",
+        subtitle="runtime collector",
+        badge_text="1",
+        badge_caption="node",
+        accent="#8d5fd3",
+        body_lines=[
+            f"corr ops   {snap['corrupter']['total']}",
+            f"rep ops    {snap['repairer']['total']}",
+            f"uptime     {snap['uptime_sec']:.0f} s",
+        ],
+    )
+
+    _draw_arrow(
+        canvas,
+        start=(244, 176),
+        end=(336, 228),
+        color="#e76f51",
+    )
+    _draw_arrow(
+        canvas,
+        start=(244, 332),
+        end=(336, 284),
+        color="#2a9d8f",
+    )
+    _draw_arrow(
+        canvas,
+        start=(552, 240),
+        end=(652, 176),
+        color="#457b9d",
+    )
+    _draw_arrow(
+        canvas,
+        start=(244, 196),
+        end=(652, 308),
+        color="#c89b2c",
+    )
+    _draw_arrow(
+        canvas,
+        start=(244, 352),
+        end=(652, 352),
+        color="#d6a11d",
+    )
+    _draw_arrow(
+        canvas,
+        start=(146, 244),
+        end=(422, 446),
+        color="#8d5fd3",
+        dashed=True,
+    )
+    _draw_arrow(
+        canvas,
+        start=(444, 324),
+        end=(480, 446),
+        color="#8d5fd3",
+        dashed=True,
+    )
+    _draw_arrow(
+        canvas,
+        start=(760, 244),
+        end=(542, 446),
+        color="#8d5fd3",
+        dashed=True,
+    )
+
+
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     try:
         import tkinter as tk
@@ -77,19 +459,32 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
 
     root = tk.Tk()
     root.title("Mixer Emulator Orchestrator Metrics")
-    root.geometry("860x250")
+    root.geometry("1040x820")
+    root.configure(bg="#f4f7fb")
+
+    canvas = tk.Canvas(
+        root,
+        height=600,
+        bg="#f4f7fb",
+        highlightthickness=0,
+        bd=0,
+    )
+    canvas.pack(fill="x", padx=10, pady=(10, 0))
 
     text = tk.StringVar(value="starting...")
     label = tk.Label(
         root,
         textvariable=text,
-        anchor="w",
+        anchor="nw",
         justify="left",
-        font=("Consolas", 11),
-        padx=12,
-        pady=12,
+        font=("Menlo", 11),
+        padx=14,
+        pady=14,
+        bg="#ffffff",
+        fg="#1f2937",
+        relief="flat",
     )
-    label.pack(fill="both", expand=True)
+    label.pack(fill="both", expand=True, padx=10, pady=10)
 
     def tick() -> None:
         try:
@@ -104,19 +499,18 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
                 root.destroy()
             return
 
-        lines = [
-            "System Orchestrator",
-            f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
-            format_worker_instances(worker_instances),
-            format_corrupted_rows(corrupted_rows),
-            format_block("db", snap["db"]),
-            format_block("service", snap["service"]),
-            format_block("corrupter", snap["corrupter"]),
-            format_block("repairer", snap["repairer"]),
-            *format_transients(snap.get("transient")),
-            *format_errors(snap.get("recent_errors")),
-            "Close this window to stop all components.",
-        ]
+        _draw_metrics_topology(
+            canvas,
+            snap=snap,
+            corrupted_rows=corrupted_rows,
+            worker_instances=worker_instances,
+        )
+        lines = _build_monitor_lines(
+            orchestrator,
+            snap,
+            corrupted_rows,
+            worker_instances,
+        )
         text.set("\n".join(lines))
 
         if orchestrator.is_running:
