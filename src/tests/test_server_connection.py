@@ -79,7 +79,7 @@ class TestSocketDecoupling(unittest.TestCase):
 
         resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"}, "/name")
         self.assertEqual(resp2["status"], "ok")
-        self.assertTrue(resp2["result"])
+        self.assertEqual(resp2["result"], {"updated": True})
 
         # old hash should no longer match
         resp3 = client.request("GET", {"hash": hex_from_bytes(h)}, "/hash")

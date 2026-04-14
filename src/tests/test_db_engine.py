@@ -56,6 +56,31 @@ class TestDbEngine(unittest.TestCase):
         self.assertEqual(after["corrupted_records"], 1)
         self.assertEqual(after["corruption_percent"], 3.12)
 
+    def test_count_corrupted_records_reports_progress(self):
+        progress_updates = []
+
+        self.db.update_record(3, "zzzzz")
+        corrupted = self.db.count_corrupted_records(
+            progress_callback=lambda current, total: progress_updates.append(
+                (current, total)
+            )
+        )
+
+        self.assertEqual(corrupted, 1)
+        self.assertGreaterEqual(len(progress_updates), 1)
+        self.assertEqual(progress_updates[-1], (32, 32))
+
+    def test_command_update_record_returns_one_when_row_changes(self):
+        result = self.db.command_update_record(3, "zzzzz")
+        self.assertEqual(result, 1)
+
+        result = self.db.command_update_record(3, "aaaad")
+        self.assertEqual(result, 1)
+
+    def test_command_update_record_noop_returns_zero(self):
+        result = self.db.command_update_record(3, "aaaad")
+        self.assertEqual(result, 0)
+
     def test_multiple_connections_can_read_concurrently(self):
         exceptions = []
         start_event = threading.Event()

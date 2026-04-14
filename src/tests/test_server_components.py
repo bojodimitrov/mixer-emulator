@@ -73,8 +73,8 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
         resp = client.query(h)
         self.assertEqual(resp, [record_id, name_b.decode("ascii")])
 
-        ok = client.command(record_id, "zzzzz")
-        self.assertTrue(ok)
+        result = client.command(record_id, "zzzzz")
+        self.assertEqual(result, 1)
 
         # old hash should no longer match
         resp2 = client.query(h)

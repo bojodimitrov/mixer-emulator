@@ -14,6 +14,14 @@ class _FakeCacheClient:
         return self._value
 
 
+class _FakeThread:
+    def __init__(self, alive: bool):
+        self._alive = alive
+
+    def is_alive(self):
+        return self._alive
+
+
 class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
     def test_get_corrupted_rows_count_returns_zero_when_missing(self):
         orchestrator = SystemOrchestrator(
@@ -51,6 +59,32 @@ class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             orchestrator.get_corrupted_rows_count()
+
+    def test_get_worker_instance_counts_reports_running_and_configured(self):
+        orchestrator = SystemOrchestrator(
+            db_lookup_strategy=DbEngine.STRATEGY_LINEAR,
+            corrupter_count=3,
+            repairer_count=2,
+            client_pause_ms=0.0,
+        )
+        self.addCleanup(orchestrator.stop)
+        orchestrator._corrupter_threads = [  # type: ignore[assignment]
+            _FakeThread(True),
+            _FakeThread(False),
+            _FakeThread(True),
+        ]
+        orchestrator._repairer_threads = [  # type: ignore[assignment]
+            _FakeThread(True),
+            _FakeThread(False),
+        ]
+
+        self.assertEqual(
+            orchestrator.get_worker_instance_counts(),
+            {
+                "corrupter": {"configured": 3, "running": 2},
+                "repairer": {"configured": 2, "running": 1},
+            },
+        )
 
 
 if __name__ == "__main__":

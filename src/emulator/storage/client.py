@@ -47,10 +47,13 @@ class DbClient(TcpClient):
             raise RuntimeError(resp.get("error") or "db error")
         return resp.get("result")
 
-    def command(self, id_: int, new_name_str: str) -> bool:
+    def command(self, id_: int, new_name_str: str) -> int:
         resp = self._request(
             {"op": "Command", "id": int(id_), "new_name": new_name_str}
         )
         if resp.get("status") != "ok":
             raise RuntimeError(resp.get("error") or "db error")
-        return bool(resp.get("result"))
+        result = resp.get("result")
+        if isinstance(result, bool) or not isinstance(result, int):
+            raise RuntimeError("db command payload was not an integer")
+        return result

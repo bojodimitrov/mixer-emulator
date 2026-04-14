@@ -6,7 +6,7 @@ import mmap
 import os
 import struct
 import time
-from typing import Dict, Literal, Optional, Tuple
+from typing import Callable, Dict, Literal, Optional, Tuple
 
 from emulator.transport_layer.transport import hex_from_bytes
 
@@ -218,31 +218,44 @@ class DbEngine:
         id_read, name_b, hashb = struct.unpack(RECORD_STRUCT, data)
         return id_read, name_b.decode("ascii"), hex_from_bytes(hashb)
 
-    def count_corrupted_records(self) -> int:
+    def count_corrupted_records(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
         """Count rows where stored name differs from canonical id_to_name(id)."""
         with self._read_lock():
             file_size = os.path.getsize(DEFAULT_DB_PATH)
 
             if file_size == 0:
+                if progress_callback is not None:
+                    progress_callback(0, 0)
                 return 0
 
             corrupted = 0
             with open(DEFAULT_DB_PATH, "rb") as f:
                 mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
                 try:
-                    for off in range(0, len(mm), RECORD_SIZE):
+                    total_records = len(mm) // RECORD_SIZE
+                    for index, off in enumerate(range(0, len(mm), RECORD_SIZE), 1):
                         id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
                         if name_b != id_to_name(int(id_)):
                             corrupted += 1
+                        if progress_callback is not None and (
+                            index % 100_000 == 0 or index == total_records
+                        ):
+                            progress_callback(index, total_records)
                 finally:
                     mm.close()
 
             return corrupted
 
-    def get_corruption_level(self) -> Dict[str, float | int]:
+    def get_corruption_level(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> Dict[str, float | int]:
         """Return corruption metrics for the whole DB."""
         total_records = self.record_count()
-        corrupted_records = self.count_corrupted_records()
+        corrupted_records = self.count_corrupted_records(progress_callback=progress_callback)
         corruption_percent = (
             (corrupted_records / total_records) if total_records > 0 else 0.0
         ) * 100.0
@@ -260,8 +273,13 @@ class DbEngine:
 
     def update_record(self, id_: int, new_name_str: str) -> bool:
         if self.lookup_strategy == self.STRATEGY_LINEAR:
-            return self._update_record_linear(id_, new_name_str)
-        return self._update_record_bplus(id_, new_name_str)
+            return bool(self._command_update_record_linear(id_, new_name_str))
+        return bool(self._command_update_record_bplus(id_, new_name_str))
+
+    def command_update_record(self, id_: int, new_name_str: str) -> int:
+        if self.lookup_strategy == self.STRATEGY_LINEAR:
+            return self._command_update_record_linear(id_, new_name_str)
+        return self._command_update_record_bplus(id_, new_name_str)
 
     def _query_by_hash_linear(self, hash: str) -> Optional[Tuple[int, str]]:
         hash_bytes = bytes.fromhex(hash)
@@ -302,24 +320,35 @@ class DbEngine:
                 return None
             return id_read, name
 
-    def _update_record_linear(self, id_: int, new_name_str: str) -> bool:
+    def _command_update_record_linear(self, id_: int, new_name_str: str) -> int:
         self._validate_name(new_name_str, "new_name_str")
 
         with self._row_write_lock(id_):
             file_size = os.path.getsize(DEFAULT_DB_PATH)
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
+
+            record_offset = id_ * RECORD_SIZE
             new_name = new_name_str.encode("ascii")
             new_hash = compute_hash_for(id_, new_name)
-            packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
+
             with open(DEFAULT_DB_PATH, "r+b") as f:
-                f.seek(id_ * RECORD_SIZE)
+                f.seek(record_offset)
+                old_record = f.read(RECORD_SIZE)
+                _, old_name_b, _ = struct.unpack(RECORD_STRUCT, old_record)
+                changed = old_name_b != new_name
+
+                if not changed:
+                    return 0
+
+                packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
+                f.seek(record_offset)
                 f.write(packed)
                 f.flush()
 
-        return True
+        return 1
 
-    def _update_record_bplus(self, id_: int, new_name_str: str) -> bool:
+    def _command_update_record_bplus(self, id_: int, new_name_str: str) -> int:
         self._validate_name(new_name_str, "new_name_str")
 
         if not os.path.exists(DEFAULT_BPLUS_INDEX_PATH):
@@ -335,15 +364,20 @@ class DbEngine:
             if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
 
+            record_offset = id_ * RECORD_SIZE
             with open(DEFAULT_DB_PATH, "r+b") as f:
-                f.seek(id_ * RECORD_SIZE)
+                f.seek(record_offset)
                 old_record = f.read(RECORD_SIZE)
                 _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
+                changed = old_name_b != new_name
+
+                if not changed:
+                    return 0
 
                 packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
                 old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
 
-                f.seek(id_ * RECORD_SIZE)
+                f.seek(record_offset)
                 f.write(packed)
                 f.flush()
 
@@ -353,17 +387,17 @@ class DbEngine:
                         success = idx.update(old_hash, new_hash, id_)
                         if not success:
                             # Roll back DB update when index update cannot be applied.
-                            f.seek(id_ * RECORD_SIZE)
+                            f.seek(record_offset)
                             f.write(old_packed)
                             f.flush()
-                            return False
+                            return 0
                 except Exception:
-                    f.seek(id_ * RECORD_SIZE)
+                    f.seek(record_offset)
                     f.write(old_packed)
                     f.flush()
                     raise
 
-        return True
+        return 1
 
     def update_record_with_bplus_index(self, id_: int, new_name_str: str) -> bool:
         """
@@ -372,7 +406,7 @@ class DbEngine:
         Returns True if update succeeded, False if index update failed.
         Updates both the database file and the B+ tree index.
         """
-        return self._update_record_bplus(id_, new_name_str)
+        return bool(self._command_update_record_bplus(id_, new_name_str))
 
 
 def create_database(start: int = 0, end: int = 11_881_376) -> None:

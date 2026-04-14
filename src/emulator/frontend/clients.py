@@ -202,7 +202,8 @@ class Corrupter(FrontendClient):
             )
 
             ok = isinstance(resp, dict) and resp.get("status") == "ok"
-            if ok and bool(resp.get("result")):
+            result = resp.get("result") if isinstance(resp, dict) else None
+            if ok and isinstance(result, dict) and result.get("updated") is True:
                 self._adjust_corrupted_rows(1)
 
             # Include chosen inputs so orchestrators/demos can chain actions.
@@ -283,7 +284,12 @@ class Repairer(FrontendClient):
                 isinstance(repair_response, dict)
                 and repair_response.get("status") == "ok"
             )
-            if ok and bool(repair_response.get("result")):
+            result = (
+                repair_response.get("result")
+                if isinstance(repair_response, dict)
+                else None
+            )
+            if ok and isinstance(result, dict) and result.get("updated") is True:
                 self._adjust_corrupted_rows(-1)
             return {"action": "repaired", "id": record_id, "response": repair_response}
         finally:

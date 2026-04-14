@@ -175,7 +175,13 @@ class CustomApi(Api):
     def get_by_hash(self, payload: Dict[str, Any]):
         return self.db_client.query(payload["hash"])
 
+    @staticmethod
+    def _build_update_response(updated: int) -> Dict[str, bool]:
+        if isinstance(updated, bool) or not isinstance(updated, int):
+            raise RuntimeError("db command result was not an integer")
+        return {"updated": bool(updated)}
+
     def post_by_id(self, payload: Dict[str, Any]):
         id_ = payload["id"]
         new_name = payload["new_name"]
-        return self.db_client.command(id_, new_name)
+        return self._build_update_response(self.db_client.command(id_, new_name))

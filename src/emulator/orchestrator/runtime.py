@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import suppress
-from typing import List
+from typing import Dict, List
 
 from emulator.cache.client import CacheClient
 from emulator.cache.server import CacheServer
@@ -27,6 +27,8 @@ class SystemOrchestrator:
     ) -> None:
         self._stop_event = threading.Event()
         self._threads: List[threading.Thread] = []
+        self._corrupter_threads: List[threading.Thread] = []
+        self._repairer_threads: List[threading.Thread] = []
         self.metrics_server = MetricsCollectorServer()
         self.metrics = MetricsCollectorClient()
         self.cache_server = CacheServer()
@@ -66,6 +68,22 @@ class SystemOrchestrator:
             raise RuntimeError("corrupted_rows cache value is not an integer")
         return value
 
+    @staticmethod
+    def _count_alive_threads(threads: List[threading.Thread]) -> int:
+        return sum(1 for thread in threads if thread.is_alive())
+
+    def get_worker_instance_counts(self) -> Dict[str, Dict[str, int]]:
+        return {
+            "corrupter": {
+                "configured": self._corrupter_count,
+                "running": self._count_alive_threads(self._corrupter_threads),
+            },
+            "repairer": {
+                "configured": self._repairer_count,
+                "running": self._count_alive_threads(self._repairer_threads),
+            },
+        }
+
     def start(self) -> None:
         self.metrics_server.start()
         self.cache_server.start()
@@ -80,6 +98,7 @@ class SystemOrchestrator:
                 daemon=True,
             )
             t.start()
+            self._corrupter_threads.append(t)
             self._threads.append(t)
 
         for idx in range(self._repairer_count):
@@ -89,6 +108,7 @@ class SystemOrchestrator:
                 daemon=True,
             )
             t.start()
+            self._repairer_threads.append(t)
             self._threads.append(t)
 
     def stop(self) -> None:

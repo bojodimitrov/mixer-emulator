@@ -58,6 +58,16 @@ def format_corrupted_rows(count: int) -> str:
     return f"corrupted_rows={count}"
 
 
+def format_worker_instances(counts: Dict[str, Any]) -> str:
+    corrupter = counts.get("corrupter", {}) if isinstance(counts, dict) else {}
+    repairer = counts.get("repairer", {}) if isinstance(counts, dict) else {}
+    return (
+        "workers: "
+        f"corrupter={int(corrupter.get('running', 0) or 0)}/{int(corrupter.get('configured', 0) or 0)} "
+        f"repairer={int(repairer.get('running', 0) or 0)}/{int(repairer.get('configured', 0) or 0)}"
+    )
+
+
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     try:
         import tkinter as tk
@@ -85,6 +95,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
         try:
             snap = orchestrator.metrics.snapshot()
             corrupted_rows = orchestrator.get_corrupted_rows_count()
+            worker_instances = orchestrator.get_worker_instance_counts()
         except Exception as exc:
             text.set(f"metrics snapshot failed: {exc}")
             if orchestrator.is_running:
@@ -96,6 +107,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
         lines = [
             "System Orchestrator",
             f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
+            format_worker_instances(worker_instances),
             format_corrupted_rows(corrupted_rows),
             format_block("db", snap["db"]),
             format_block("service", snap["service"]),
@@ -131,9 +143,12 @@ def run_headless_monitor(
         while orchestrator.is_running:
             snap = orchestrator.metrics.snapshot()
             corrupted_rows = orchestrator.get_corrupted_rows_count()
+            worker_instances = orchestrator.get_worker_instance_counts()
 
             print(
                 f"uptime={snap['uptime_sec']:.1f}s | "
+                + format_worker_instances(worker_instances)
+                + " | "
                 + format_corrupted_rows(corrupted_rows)
                 + " | "
                 + format_block("db", snap["db"])

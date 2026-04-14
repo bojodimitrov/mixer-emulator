@@ -30,7 +30,7 @@ def _database_worker(
     if request.operation == "Command":
         id_ = request.payload["id"]
         new_name_str = request.payload["new_name"]
-        return db.update_record(id_, new_name_str)
+        return db.command_update_record(id_, new_name_str)
 
     raise ValueError(f"unknown operation: {request.operation}")
 

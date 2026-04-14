@@ -108,7 +108,7 @@ class TestFrontendClientsRunners(unittest.TestCase):
         responses = iter(
             [
                 {"status": "ok", "result": [5, "aaaaa"]},
-                {"status": "ok", "result": True},
+                {"status": "ok", "result": {"updated": True}},
             ]
         )
 
@@ -142,7 +142,7 @@ class TestFrontendClientsRunners(unittest.TestCase):
         responses = iter(
             [
                 {"status": "ok", "result": None},
-                {"status": "ok", "result": True},
+                {"status": "ok", "result": {"updated": True}},
             ]
         )
 
@@ -161,6 +161,28 @@ class TestFrontendClientsRunners(unittest.TestCase):
             fake_cache.incr_calls,
             [{"key": "corrupted_rows", "amount": -1}],
         )
+
+    def test_repairer_does_not_decrement_counter_on_noop_update(self):
+        fake_client: Any = _FakeServiceClient()
+        fake_cache: Any = _FakeCacheClient()
+
+        responses = iter(
+            [
+                {"status": "ok", "result": None},
+                {"status": "ok", "result": {"updated": False}},
+            ]
+        )
+
+        def _request(method, data, path):
+            fake_client.calls.append({"method": method, "data": data, "path": path})
+            return next(responses)
+
+        fake_client.request = _request
+
+        resp = Repairer(client=fake_client, cache_client=fake_cache).run_once(record_id=5)
+
+        self.assertEqual(resp.get("action"), "repaired")
+        self.assertEqual(fake_cache.incr_calls, [])
 
     def test_corrupter_run_loop_stops_with_cancel_token(self):
         stop_event = threading.Event()
