@@ -52,6 +52,12 @@ def format_transients(transient: Any) -> list[str]:
     ]
 
 
+def format_corrupted_rows(count: int) -> str:
+    if count < 0:
+        return f"repaired_rows={abs(count)}"
+    return f"corrupted_rows={count}"
+
+
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     try:
         import tkinter as tk
@@ -78,6 +84,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     def tick() -> None:
         try:
             snap = orchestrator.metrics.snapshot()
+            corrupted_rows = orchestrator.get_corrupted_rows_count()
         except Exception as exc:
             text.set(f"metrics snapshot failed: {exc}")
             if orchestrator.is_running:
@@ -89,6 +96,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
         lines = [
             "System Orchestrator",
             f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
+            format_corrupted_rows(corrupted_rows),
             format_block("db", snap["db"]),
             format_block("service", snap["service"]),
             format_block("corrupter", snap["corrupter"]),
@@ -122,8 +130,12 @@ def run_headless_monitor(
     try:
         while orchestrator.is_running:
             snap = orchestrator.metrics.snapshot()
+            corrupted_rows = orchestrator.get_corrupted_rows_count()
+
             print(
                 f"uptime={snap['uptime_sec']:.1f}s | "
+                + format_corrupted_rows(corrupted_rows)
+                + " | "
                 + format_block("db", snap["db"])
                 + " | "
                 + format_block("service", snap["service"])

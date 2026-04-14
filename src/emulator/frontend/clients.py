@@ -3,12 +3,14 @@ import string
 import time
 from typing import Any, Callable, Dict, Optional, Union
 
+from emulator.cache.client import CacheClient
 from emulator.frontend.loop_cancellation import LoopCancellation
 from emulator.microservice.client import MicroserviceClient
 from emulator.transport_layer.transport import hex_from_bytes
 from emulator.utils import compute_hash_for, id_to_name
 
 _MAX_DB_ID = 11_881_375  # 26^5 - 1, last valid record id
+_CORRUPTED_ROWS_CACHE_KEY = "corrupted_rows"
 
 
 def _random_name() -> str:
@@ -33,6 +35,7 @@ class FrontendClient:
         self,
         metrics_client: Any = None,
         client: Optional[MicroserviceClient] = None,
+        cache_client: Optional[CacheClient] = None,
     ):
         if client is None:
             self.client = MicroserviceClient(
@@ -43,6 +46,8 @@ class FrontendClient:
         else:
             self.client = client
             self._owns_client = False
+
+        self._cache_client = cache_client
         self._metrics_client = metrics_client
 
     def request(
@@ -86,6 +91,11 @@ class FrontendClient:
             self._metrics_client.record(
                 self.service_name, ok, (time.perf_counter() - started) * 1000.0
             )
+
+    def _adjust_corrupted_rows(self, delta: int) -> None:
+        if self._cache_client is None or delta == 0:
+            return
+        self._cache_client.incr(_CORRUPTED_ROWS_CACHE_KEY, delta)
 
     def _run_loop(self, operation: Callable[[], Dict[str, Any]], *, pause_ms: float, seed: Optional[int], cancel_token: Any) -> None:
         cancellation = LoopCancellation(cancel_token)
@@ -145,10 +155,12 @@ class Corrupter(FrontendClient):
         self,
         metrics_client: Any = None,
         client: Optional[MicroserviceClient] = None,
+        cache_client: Optional[CacheClient] = None,
     ):
         super().__init__(
             metrics_client=metrics_client,
             client=client,
+            cache_client=cache_client,
         )
 
     def run_once(
@@ -190,6 +202,8 @@ class Corrupter(FrontendClient):
             )
 
             ok = isinstance(resp, dict) and resp.get("status") == "ok"
+            if ok and bool(resp.get("result")):
+                self._adjust_corrupted_rows(1)
 
             # Include chosen inputs so orchestrators/demos can chain actions.
             if isinstance(resp, dict):
@@ -226,10 +240,12 @@ class Repairer(FrontendClient):
         self,
         metrics_client: Any = None,
         client: Optional[MicroserviceClient] = None,
+        cache_client: Optional[CacheClient] = None,
     ):
         super().__init__(
             metrics_client=metrics_client,
             client=client,
+            cache_client=cache_client,
         )
 
     def run_once(self, *, record_id: Optional[int] = None) -> Dict[str, Any]:
@@ -267,6 +283,8 @@ class Repairer(FrontendClient):
                 isinstance(repair_response, dict)
                 and repair_response.get("status") == "ok"
             )
+            if ok and bool(repair_response.get("result")):
+                self._adjust_corrupted_rows(-1)
             return {"action": "repaired", "id": record_id, "response": repair_response}
         finally:
             self._record_metrics(ok, started)

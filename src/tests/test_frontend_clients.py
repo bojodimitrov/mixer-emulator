@@ -48,6 +48,15 @@ class _FakeServiceClient:
         return None
 
 
+class _FakeCacheClient:
+    def __init__(self):
+        self.incr_calls = []
+
+    def incr(self, key, amount=1):
+        self.incr_calls.append({"key": key, "amount": amount})
+        return amount
+
+
 class TestFrontendClientsRunners(unittest.TestCase):
     def test_request_accepts_config_dict(self):
         fake_client: Any = _FakeServiceClient()
@@ -92,11 +101,66 @@ class TestFrontendClientsRunners(unittest.TestCase):
                 self.assertEqual(resp.get("action"), "ok", msg=str(resp))
                 self.assertEqual(resp.get("response", {}).get("status"), "ok")
 
+    def test_corrupter_increments_counter_on_successful_post(self):
+        fake_client: Any = _FakeServiceClient()
+        fake_cache: Any = _FakeCacheClient()
+
+        responses = iter(
+            [
+                {"status": "ok", "result": [5, "aaaaa"]},
+                {"status": "ok", "result": True},
+            ]
+        )
+
+        def _request(method, data, path):
+            fake_client.calls.append({"method": method, "data": data, "path": path})
+            return next(responses)
+
+        fake_client.request = _request
+
+        resp = Corrupter(client=fake_client, cache_client=fake_cache).run_once(
+            record_id=5,
+            new_name="abcde",
+        )
+
+        self.assertEqual(resp.get("status"), "ok")
+        self.assertEqual(
+            fake_cache.incr_calls,
+            [{"key": "corrupted_rows", "amount": 1}],
+        )
+
     def test_repairer_run_once_attempts_get_first(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None
             resp = Repairer().run_once(record_id=5)
             self.assertIn(resp.get("action"), {"ok", "repaired"})
+
+    def test_repairer_decrements_counter_on_successful_repair(self):
+        fake_client: Any = _FakeServiceClient()
+        fake_cache: Any = _FakeCacheClient()
+
+        responses = iter(
+            [
+                {"status": "ok", "result": None},
+                {"status": "ok", "result": True},
+            ]
+        )
+
+        def _request(method, data, path):
+            fake_client.calls.append({"method": method, "data": data, "path": path})
+            return next(responses)
+
+        fake_client.request = _request
+
+        resp = Repairer(client=fake_client, cache_client=fake_cache).run_once(
+            record_id=5,
+        )
+
+        self.assertEqual(resp.get("action"), "repaired")
+        self.assertEqual(
+            fake_cache.incr_calls,
+            [{"key": "corrupted_rows", "amount": -1}],
+        )
 
     def test_corrupter_run_loop_stops_with_cancel_token(self):
         stop_event = threading.Event()

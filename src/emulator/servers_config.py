@@ -30,6 +30,13 @@ class MetricsEndpoint:
     port: int = 50003
 
 
+@dataclass(frozen=True)
+class CacheEndpoint:
+    host: str = "127.0.0.1"
+    port: int = 50004
+
+
 DB_ENDPOINT = DbEndpoint()
 SERVICE_ENDPOINT = ServiceEndpoint()
 METRICS_ENDPOINT = MetricsEndpoint()
+CACHE_ENDPOINT = CacheEndpoint()
