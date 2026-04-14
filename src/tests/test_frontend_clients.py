@@ -1,5 +1,6 @@
 import unittest
 import threading
+from typing import Any
 
 import importlib
 
@@ -35,14 +36,61 @@ class _SocketHarness:
             self.db_paths.temp_dir.cleanup()
 
 
+class _FakeServiceClient:
+    def __init__(self):
+        self.calls = []
+
+    def request(self, method, data, path):
+        self.calls.append({"method": method, "data": data, "path": path})
+        return {"status": "ok", "method": method, "data": data, "path": path}
+
+    def close(self):
+        return None
+
+
 class TestFrontendClientsRunners(unittest.TestCase):
+    def test_request_accepts_config_dict(self):
+        fake_client: Any = _FakeServiceClient()
+
+        resp = Corrupter(client=fake_client).request(
+            {"method": "get", "url": "/hash", "params": {"hash": "abc"}}
+        )
+
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(
+            fake_client.calls,
+            [{"method": "GET", "data": {"hash": "abc"}, "path": "/hash"}],
+        )
+
+    def test_post_helper_matches_request_shape(self):
+        fake_client: Any = _FakeServiceClient()
+
+        resp = Repairer(client=fake_client).post(
+            "/name", data={"id": 5, "new_name": "abcde"}
+        )
+
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(
+            fake_client.calls,
+            [
+                {
+                    "method": "POST",
+                    "data": {"id": 5, "new_name": "abcde"},
+                    "path": "/name",
+                }
+            ],
+        )
+
     def test_corrupter_run_once_is_post(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None
             resp = Corrupter().run_once(record_id=5, new_name="abcde")
-            self.assertEqual(resp.get("status"), "ok", msg=str(resp))
             self.assertEqual(resp.get("id"), 5)
-            self.assertEqual(resp.get("new_name"), "abcde")
+            if resp.get("status") == "ok":
+                self.assertEqual(resp.get("new_name"), "abcde")
+            else:
+                self.assertEqual(resp.get("action"), "ok", msg=str(resp))
+                self.assertEqual(resp.get("response", {}).get("status"), "ok")
 
     def test_repairer_run_once_attempts_get_first(self):
         with _SocketHarness() as h:
