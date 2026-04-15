@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, Tuple, Type
 
 from emulator.storage.client import DbClient
+from emulator.cache.client import CacheClient
 
 
 class Request:
@@ -156,6 +157,15 @@ class Microservice:
                     close_fn()
 
 
+# Cache key prefixes used by the distributed hash read cache.
+_CACHE_HASH_PREFIX = "hash:"
+_CACHE_IDX_PREFIX = "hidx:"
+# TTL for hash cache entries.
+# Short enough that corruption/repair cycles are visible within a few seconds;
+# long enough to collapse repeated identical hash lookups under high load.
+_HASH_CACHE_TTL_SEC = 10.0
+
+
 class CustomApi(Api):
     """This where usually Web API frameworks custom code is built."""
 
@@ -163,7 +173,7 @@ class CustomApi(Api):
         super().__init__()
         # Service handlers are highly concurrent; keep a connection pool to avoid
         # creating a fresh outbound DB socket for every single request.
-        # max_idle_sec stays below DbServer conn_timeout_sec (30s) so the pool
+        # max_idle_sec stays below DbServer conn_timeout_sec (60s) so the pool
         # proactively discards sockets before the server closes them.
         self.db_client = DbClient(
             pool_size=32,
@@ -172,16 +182,40 @@ class CustomApi(Api):
             retry_backoff_ms=50.0,
             max_idle_sec=45.0,
         )
+        # Distributed cache shared across all service instances.
+        # Reads: "hash:{hex}" → [id, name] (None on miss, not cached).
+        # Reverse index: "hidx:{id}" → hash_hex, used to evict on write.
+        self._cache = CacheClient(
+            pool_size=8,
+            max_idle_sec=45.0,
+        )
 
     def close(self) -> None:
         self.db_client.close()
+        self._cache.close()
 
     def register_routes(self) -> None:
         self.get("/hash")(self.get_by_hash)
         self.post("/name")(self.post_by_id)
 
     def get_by_hash(self, payload: Dict[str, Any]):
-        return self.db_client.query(payload["hash"])
+        hash_hex = payload["hash"]
+        try:
+            cached = self._cache.get(_CACHE_HASH_PREFIX + hash_hex)
+        except Exception:
+            cached = None
+        if cached is not None:
+            return cached  # already a [id, name] list from JSON
+        result = self.db_client.query(hash_hex)
+        if result is not None:
+            # Only cache hits; misses are fast in the B+ tree.
+            id_, name = result
+            try:
+                self._cache.set(_CACHE_HASH_PREFIX + hash_hex, list(result), ttl_sec=_HASH_CACHE_TTL_SEC)
+                self._cache.set(_CACHE_IDX_PREFIX + str(id_), hash_hex, ttl_sec=_HASH_CACHE_TTL_SEC)
+            except Exception:
+                pass  # cache is best-effort; never block a request
+        return result
 
     @staticmethod
     def _build_update_response(updated: int) -> Dict[str, bool]:
@@ -192,4 +226,14 @@ class CustomApi(Api):
     def post_by_id(self, payload: Dict[str, Any]):
         id_ = payload["id"]
         new_name = payload["new_name"]
-        return self._build_update_response(self.db_client.command(id_, new_name))
+        result = self._build_update_response(self.db_client.command(id_, new_name))
+        if result.get("updated"):
+            # Evict stale hash entry via the reverse index.
+            try:
+                old_hash = self._cache.get(_CACHE_IDX_PREFIX + str(id_))
+                if old_hash is not None:
+                    self._cache.delete(_CACHE_HASH_PREFIX + str(old_hash))
+                    self._cache.delete(_CACHE_IDX_PREFIX + str(id_))
+            except Exception:
+                pass  # cache is best-effort
+        return result

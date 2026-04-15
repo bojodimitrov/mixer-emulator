@@ -85,8 +85,7 @@ class MicroserviceServer(TcpServerBase):
             error_message = _exc_to_message(exc)
             self._metrics_client.record_error(
                 "service",
-                "service request failed for "
-                f"method={method} path={path}: {error_message}",
+                f"{method} {path} failed: {error_message}",
             )
             return {"status": "error", "error": error_message}
 

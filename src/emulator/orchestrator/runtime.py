@@ -17,6 +17,7 @@ from emulator.storage.orchestrator import LookupStrategy
 from emulator.transport_layer.transport import TcpEndpoint
 
 _CORRUPTED_ROWS_CACHE_KEY = "corrupted_rows"
+_REPAIRED_ROWS_CACHE_KEY = "repaired_rows"
 
 
 class SystemOrchestrator:
@@ -81,6 +82,14 @@ class SystemOrchestrator:
             raise RuntimeError("corrupted_rows cache value is not an integer")
         return value
 
+    def get_repaired_rows_count(self) -> int:
+        value = self._cache_client.get(_REPAIRED_ROWS_CACHE_KEY)
+        if value is None:
+            return 0
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise RuntimeError("repaired_rows cache value is not an integer")
+        return value
+
     @staticmethod
     def _count_alive_threads(threads: List[threading.Thread]) -> int:
         return sum(1 for thread in threads if thread.is_alive())
@@ -105,6 +114,7 @@ class SystemOrchestrator:
             srv.start()
         self.load_balancer.start()
         self._cache_client.set(_CORRUPTED_ROWS_CACHE_KEY, 0)
+        self._cache_client.set(_REPAIRED_ROWS_CACHE_KEY, 0)
 
         if self._ramp_up_step_sec > 0:
             t = threading.Thread(

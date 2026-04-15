@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from typing import Any, Dict, Optional
 
 from emulator.metrics.runtime_metrics import now
 from .runtime import SystemOrchestrator
+
+
+def _play_chime() -> None:
+    """Play a brief chime sound non-blocking. Silently no-ops on unsupported platforms."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                ["afplay", "/System/Library/Sounds/Glass.aiff"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif sys.platform == "win32":
+            import winsound  # type: ignore[import]
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+    except Exception:
+        pass
 
 
 def format_block(name: str, data: Dict[str, Any]) -> str:
@@ -52,10 +70,9 @@ def format_transients(transient: Any) -> list[str]:
     ]
 
 
-def format_corrupted_rows(count: int) -> str:
-    if count < 0:
-        return f"repaired_rows={abs(count)}"
-    return f"corrupted_rows={count}"
+def format_row_counts(corrupted: int, repaired: int) -> str:
+    net = corrupted - repaired
+    return f"corrupted={corrupted}  repaired={repaired}  net={net:+d}"
 
 
 def format_worker_instances(counts: Dict[str, Any]) -> str:
@@ -89,13 +106,14 @@ def _build_monitor_lines(
     orchestrator: SystemOrchestrator,
     snap: Dict[str, Any],
     corrupted_rows: int,
+    repaired_rows: int,
     worker_instances: Dict[str, Any],
 ) -> list[str]:
     return [
         "System Orchestrator",
         f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | lb={orchestrator.load_balancer.host}:{orchestrator.load_balancer.port} | services={len(orchestrator.service_servers)}",
         format_worker_instances(worker_instances),
-        format_corrupted_rows(corrupted_rows),
+        format_row_counts(corrupted_rows, repaired_rows),
         format_block("db", snap["db"]),
         format_block("service", snap["service"]),
         "service nodes:",
@@ -278,6 +296,7 @@ def _draw_metrics_topology(
     *,
     snap: Dict[str, Any],
     corrupted_rows: int,
+    repaired_rows: int,
     worker_instances: Dict[str, Any],
 ) -> None:
     canvas.delete("all")
@@ -410,9 +429,9 @@ def _draw_metrics_topology(
         badge_caption="node",
         accent="#e9c46a",
         body_lines=[
-            format_corrupted_rows(corrupted_rows),
-            "tracks frontend update events",
-            "shared across worker groups",
+            f"corrupted  {corrupted_rows}",
+            f"repaired   {repaired_rows}",
+            f"net        {corrupted_rows - repaired_rows:+d}",
         ],
     )
     # Metrics  x=620  center_x=762
@@ -488,10 +507,14 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
     )
     label.pack(fill="both", expand=True, padx=10, pady=10)
 
+    _prev_repaired = 0
+
     def tick() -> None:
+        nonlocal _prev_repaired
         try:
             snap = orchestrator.metrics.snapshot()
             corrupted_rows = orchestrator.get_corrupted_rows_count()
+            repaired_rows = orchestrator.get_repaired_rows_count()
             worker_instances = orchestrator.get_worker_instance_counts()
         except Exception as exc:
             text.set(f"metrics snapshot failed: {exc}")
@@ -505,12 +528,17 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
             canvas,
             snap=snap,
             corrupted_rows=corrupted_rows,
+            repaired_rows=repaired_rows,
             worker_instances=worker_instances,
         )
+        if repaired_rows > _prev_repaired:
+            _play_chime()
+        _prev_repaired = repaired_rows
         lines = _build_monitor_lines(
             orchestrator,
             snap,
             corrupted_rows,
+            repaired_rows,
             worker_instances,
         )
         text.set("\n".join(lines))
@@ -535,17 +563,23 @@ def run_headless_monitor(
     duration_sec: Optional[float] = None,
 ) -> None:
     started = now()
+    _prev_repaired = 0
     try:
         while orchestrator.is_running:
             snap = orchestrator.metrics.snapshot()
             corrupted_rows = orchestrator.get_corrupted_rows_count()
+            repaired_rows = orchestrator.get_repaired_rows_count()
             worker_instances = orchestrator.get_worker_instance_counts()
+
+            if repaired_rows > _prev_repaired:
+                _play_chime()
+            _prev_repaired = repaired_rows
 
             print(
                 f"uptime={snap['uptime_sec']:.1f}s | "
                 + format_worker_instances(worker_instances)
                 + " | "
-                + format_corrupted_rows(corrupted_rows)
+                + format_row_counts(corrupted_rows, repaired_rows)
                 + " | "
                 + format_block("db", snap["db"])
                 + " | "

@@ -11,6 +11,7 @@ from emulator.utils import compute_hash_for, id_to_name
 
 _MAX_DB_ID = 11_881_375  # 26^5 - 1, last valid record id
 _CORRUPTED_ROWS_CACHE_KEY = "corrupted_rows"
+_REPAIRED_ROWS_CACHE_KEY = "repaired_rows"
 
 
 def _random_name() -> str:
@@ -80,12 +81,6 @@ class FrontendClient:
 
         return self.client.request(method, request_data or {}, request_path)
 
-    def get(self, url: str, *, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.request({"method": "GET", "url": url, "params": params or {}})
-
-    def post(self, url: str, *, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.request({"method": "POST", "url": url, "data": data or {}})
-
     def _record_metrics(self, ok: bool, started: float) -> None:
         if self._metrics_client is not None:
             self._metrics_client.record(
@@ -96,6 +91,11 @@ class FrontendClient:
         if self._cache_client is None or delta == 0:
             return
         self._cache_client.incr(_CORRUPTED_ROWS_CACHE_KEY, delta)
+
+    def _adjust_repaired_rows(self, delta: int) -> None:
+        if self._cache_client is None or delta == 0:
+            return
+        self._cache_client.incr(_REPAIRED_ROWS_CACHE_KEY, delta)
 
     def _run_loop(self, operation: Callable[[], Dict[str, Any]], *, pause_ms: float, seed: Optional[int], cancel_token: Any) -> None:
         cancellation = LoopCancellation(cancel_token)
@@ -187,13 +187,11 @@ class Corrupter(FrontendClient):
             correct_name = id_to_name(record_id)
             correct_hash = compute_hash_for(record_id, correct_name)
 
-            get_response = self.get(
-                "/hash", params={"hash": hex_from_bytes(correct_hash)}
-            )
+            get_response = self.request("GET", {"hash": hex_from_bytes(correct_hash)}, "/hash")
             if get_response.get("status") == "error" and self._metrics_client is not None:
                 self._metrics_client.record_error(
                     self.service_name,
-                    f"GET /hash → {get_response.get('message', 'service error')}",
+                    f"GET /hash \u2192 {get_response.get('error', 'service error')}",
                 )
             if (
                 get_response.get("status") == "ok"
@@ -202,13 +200,11 @@ class Corrupter(FrontendClient):
                 ok = True
                 return {"action": "ok", "id": record_id, "response": get_response}
 
-            resp = self.post(
-                "/name", data={"id": int(record_id), "new_name": str(new_name)}
-            )
+            resp = self.request("POST", {"id": int(record_id), "new_name": str(new_name)}, "/name")
 
             ok = isinstance(resp, dict) and resp.get("status") == "ok"
             if not ok and self._metrics_client is not None:
-                error_msg = resp.get("message", "service error") if isinstance(resp, dict) else str(resp)
+                error_msg = resp.get("error", "service error") if isinstance(resp, dict) else str(resp)
                 self._metrics_client.record_error(
                     self.service_name,
                     f"POST /name → {error_msg}",
@@ -277,9 +273,7 @@ class Repairer(FrontendClient):
             correct_name = id_to_name(record_id)
             correct_hash = compute_hash_for(record_id, correct_name)
 
-            get_response = self.get(
-                "/hash", params={"hash": hex_from_bytes(correct_hash)}
-            )
+            get_response = self.request("GET", {"hash": hex_from_bytes(correct_hash)}, "/hash")
             if get_response.get("status") == "error" and self._metrics_client is not None:
                 self._metrics_client.record_error(
                     self.service_name,
@@ -292,10 +286,7 @@ class Repairer(FrontendClient):
                 ok = True
                 return {"action": "ok", "id": record_id, "response": get_response}
 
-            repair_response = self.post(
-                "/name",
-                data={"id": int(record_id), "new_name": correct_name.decode("ascii")},
-            )
+            repair_response = self.request("POST", {"id": int(record_id), "new_name": correct_name.decode("ascii")}, "/name")
             ok = (
                 isinstance(repair_response, dict)
                 and repair_response.get("status") == "ok"
@@ -312,7 +303,7 @@ class Repairer(FrontendClient):
                 else None
             )
             if ok and isinstance(result, dict) and result.get("updated") is True:
-                self._adjust_corrupted_rows(-1)
+                self._adjust_repaired_rows(1)
             return {"action": "repaired", "id": record_id, "response": repair_response}
         finally:
             self._record_metrics(ok, started)

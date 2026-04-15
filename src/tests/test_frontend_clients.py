@@ -75,8 +75,8 @@ class TestFrontendClientsRunners(unittest.TestCase):
     def test_post_helper_matches_request_shape(self):
         fake_client: Any = _FakeServiceClient()
 
-        resp = Repairer(client=fake_client).post(
-            "/name", data={"id": 5, "new_name": "abcde"}
+        resp = Repairer(client=fake_client).request(
+            "POST", {"id": 5, "new_name": "abcde"}, "/name"
         )
 
         self.assertEqual(resp["status"], "ok")
@@ -162,7 +162,7 @@ class TestFrontendClientsRunners(unittest.TestCase):
         self.assertEqual(resp.get("action"), "repaired")
         self.assertEqual(
             fake_cache.incr_calls,
-            [{"key": "corrupted_rows", "amount": -1}],
+            [{"key": "repaired_rows", "amount": 1}],
         )
 
     def test_repairer_does_not_decrement_counter_on_noop_update(self):
