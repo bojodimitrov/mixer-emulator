@@ -19,15 +19,22 @@ It includes:
 ## Problems that forced evolution
 
 Database Linear search -> sorted index
+
 Update, insert, delete and maintainability of index -> B+ tree index
+
 Scalability of database -> thread executor
+
 Cold starts -> thread pool ready to receive requests
+
 Multiple threads updating DB files -> Row-level locking and page level locking
+
 Connection churn (Only one usage of each socket address... is normally permitted) -> Reactor pattern, readiness dispatch of requests on separate threads, event loop, keep-alive connections, persisten connection reuse
 Pooled sockets are reused without checking if they are still healthy:
-
 - ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
-  -> still under improvement
+
+Database bottleneck -> sharding by ID and GSI server for the hash values
+
+Next improvement: upgrade the metrics with things like p95 and p99 latency, etc in order to find bottlenecks
 
 ## Project Structure
 
