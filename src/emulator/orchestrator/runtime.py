@@ -11,9 +11,10 @@ from emulator.metrics.collector import MetricsCollectorClient, MetricsCollectorS
 from emulator.microservice.client import MicroserviceClient
 from emulator.microservice.load_balancer import LoadBalancerServer
 from emulator.microservice.server import MicroserviceServer
-from emulator.servers_config import SERVICE_ENDPOINTS
+from emulator.servers_config import SERVICE_ENDPOINTS, GSI_ENDPOINT, DB_SHARD_ENDPOINTS
+from emulator.storage.constants import SHARD_COUNT, db_shard_path
+from emulator.storage.gsi_server import GsiServer
 from emulator.storage.server import DbServer
-from emulator.storage.orchestrator import LookupStrategy
 from emulator.transport_layer.transport import TcpEndpoint
 
 _CORRUPTED_ROWS_CACHE_KEY = "corrupted_rows"
@@ -24,7 +25,6 @@ class SystemOrchestrator:
     def __init__(
         self,
         *,
-        db_lookup_strategy: LookupStrategy,
         corrupter_count: int,
         repairer_count: int,
         client_pause_ms: float,
@@ -46,9 +46,20 @@ class SystemOrchestrator:
         # Fixed request worker budget for service-side work. Keep independent from
         # frontend client thread counts to reflect production-style sizing.
 
-        self.db_server = DbServer(
-            lookup_strategy=db_lookup_strategy,
+        self.gsi_server = GsiServer(
+            host=GSI_ENDPOINT.host,
+            port=GSI_ENDPOINT.port,
         )
+        self.db_shard_servers: List[DbServer] = [
+            DbServer(
+                host=DB_SHARD_ENDPOINTS[i].host,
+                port=DB_SHARD_ENDPOINTS[i].port,
+                db_path=db_shard_path(i),
+                shard_index=i,
+                shard_count=SHARD_COUNT,
+            )
+            for i in range(SHARD_COUNT)
+        ]
         self.service_servers = [
             MicroserviceServer(host=ep.host, port=ep.port)
             for ep in SERVICE_ENDPOINTS
@@ -109,10 +120,13 @@ class SystemOrchestrator:
     def start(self) -> None:
         self.metrics_server.start()
         self.cache_server.start()
-        self.db_server.start()
+        self.gsi_server.start()
+        for shard in self.db_shard_servers:
+            shard.start()
         for srv in self.service_servers:
             srv.start()
         self.load_balancer.start()
+
         self._cache_client.set(_CORRUPTED_ROWS_CACHE_KEY, 0)
         self._cache_client.set(_REPAIRED_ROWS_CACHE_KEY, 0)
 
@@ -183,8 +197,11 @@ class SystemOrchestrator:
         for srv in self.service_servers:
             with suppress(Exception):
                 srv.close()
+        for shard in self.db_shard_servers:
+            with suppress(Exception):
+                shard.close()
         with suppress(Exception):
-            self.db_server.close()
+            self.gsi_server.close()
         with suppress(Exception):
             self.metrics_server.close()
         with suppress(Exception):

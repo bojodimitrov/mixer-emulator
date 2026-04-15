@@ -65,6 +65,10 @@ class MicroserviceServer(TcpServerBase):
         self._metrics_client.close()
         self._service.stop()
 
+    def add_route(self, method: str, path: str, handler) -> None:
+        """Register (or overwrite) a route on the underlying Microservice."""
+        self._service.add_route(method, path, handler)
+
     def _record_error(self, message: str) -> None:
         self._metrics_client.record_error("service", message)
 

@@ -111,7 +111,7 @@ def _build_monitor_lines(
 ) -> list[str]:
     return [
         "System Orchestrator",
-        f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | lb={orchestrator.load_balancer.host}:{orchestrator.load_balancer.port} | services={len(orchestrator.service_servers)}",
+        f"uptime={snap['uptime_sec']:.1f}s | gsi={orchestrator.gsi_server.host}:{orchestrator.gsi_server.port} | shards={len(orchestrator.db_shard_servers)} | lb={orchestrator.load_balancer.host}:{orchestrator.load_balancer.port} | services={len(orchestrator.service_servers)}",
         format_worker_instances(worker_instances),
         format_row_counts(corrupted_rows, repaired_rows),
         format_block("db", snap["db"]),
@@ -380,10 +380,10 @@ def _draw_metrics_topology(
             "proto      TCP / JSON",
         ],
     )
-    # Microservice API (x4)  x=660  right=890  mid_y=254
+    # Microservice API (x4)  x=620  right=840  mid_y=254
     _draw_group_node(
         canvas,
-        x=660,
+        x=620,
         y=188,
         width=220,
         height=132,
@@ -398,17 +398,35 @@ def _draw_metrics_topology(
             f"last       {snap['service']['last_latency_ms']:.1f} ms",
         ],
     )
-    # Database  x=980  right=1200  mid_y=254  (aligned with LB and Microservice)
+    # GSI Server  x=900  right=1100  mid_y=188 (top lane — lookup path)
     _draw_group_node(
         canvas,
-        x=980,
-        y=188,
-        width=220,
-        height=132,
-        title="Database",
-        subtitle="record store",
+        x=900,
+        y=112,
+        width=200,
+        height=126,
+        title="GSI Server",
+        subtitle="hash \u2192 global_id index",
         badge_text="1",
         badge_caption="node",
+        accent="#6366f1",
+        body_lines=[
+            "port       50010",
+            "index      hash_index.bpt",
+            "io         pread / pwrite",
+        ],
+    )
+    # DB Shards (x4)  x=900  right=1100  mid_y=332 (bottom lane — data path)
+    _draw_group_node(
+        canvas,
+        x=900,
+        y=270,
+        width=200,
+        height=132,
+        title="DB Shards",
+        subtitle="sharded record store",
+        badge_text="4",
+        badge_caption="shards",
         accent="#264653",
         body_lines=[
             f"ops/s      {snap['db']['ops_per_sec']:.2f}",
@@ -420,7 +438,7 @@ def _draw_metrics_topology(
     _draw_group_node(
         canvas,
         x=258,
-        y=420,
+        y=430,
         width=200,
         height=120,
         title="Corruption Cache",
@@ -434,11 +452,11 @@ def _draw_metrics_topology(
             f"net        {corrupted_rows - repaired_rows:+d}",
         ],
     )
-    # Metrics  x=620  center_x=762
+    # Metrics  x=560  center_x=702
     _draw_group_node(
         canvas,
-        x=620,
-        y=420,
+        x=560,
+        y=430,
         width=284,
         height=122,
         title="Metrics",
@@ -458,17 +476,21 @@ def _draw_metrics_topology(
     # Repairers → Load Balancer
     _draw_arrow(canvas, start=(244, 334), end=(340, 272), color="#2a9d8f")
     # Load Balancer → Microservice API
-    _draw_arrow(canvas, start=(560, 254), end=(660, 254), color="#457b9d")
-    # Microservice API → Database (horizontal, all aligned at mid_y=254)
-    _draw_arrow(canvas, start=(880, 254), end=(980, 254), color="#457b9d")
-    # Corrupters → Corruption Cache (short arrow — cache is now on the left)
-    _draw_arrow(canvas, start=(244, 196), end=(358, 420), color="#c89b2c")
-    # Repairers → Corruption Cache (short arrow)
-    _draw_arrow(canvas, start=(244, 352), end=(358, 420), color="#d6a11d")
+    _draw_arrow(canvas, start=(560, 254), end=(620, 254), color="#457b9d")
+    # Microservice API → GSI Server (lookup: up-right)
+    _draw_arrow(canvas, start=(840, 220), end=(900, 185), color="#6366f1")
+    # Microservice API → DB Shards (read result / write: down-right)
+    _draw_arrow(canvas, start=(840, 288), end=(900, 316), color="#264653")
+    # GSI Server → DB Shards (global_id routes to shard)
+    _draw_arrow(canvas, start=(1000, 238), end=(1000, 270), color="#6366f1")
+    # Corrupters → Corruption Cache
+    _draw_arrow(canvas, start=(244, 196), end=(358, 430), color="#c89b2c")
+    # Repairers → Corruption Cache
+    _draw_arrow(canvas, start=(244, 352), end=(358, 430), color="#d6a11d")
     # Dashed metrics arrows
-    _draw_arrow(canvas, start=(146, 244), end=(762, 420), color="#8d5fd3", dashed=True)
-    _draw_arrow(canvas, start=(770, 320), end=(762, 420), color="#8d5fd3", dashed=True)
-    _draw_arrow(canvas, start=(1090, 320), end=(762, 420), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(146, 244), end=(702, 430), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(730, 320), end=(702, 430), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(1000, 402), end=(702, 430), color="#8d5fd3", dashed=True)
 
 
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:

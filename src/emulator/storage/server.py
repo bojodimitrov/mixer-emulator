@@ -1,5 +1,5 @@
 import socket
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..metrics.collector import MetricsCollectorClient
 from ..servers_config import DB_ENDPOINT
@@ -8,7 +8,7 @@ from ..transport_layer.tcp_server_base import (
     _exc_to_message,
 )
 from .engine import DbEngine
-from .orchestrator import DbRequest, DbOrchestrator, LookupStrategy
+from .orchestrator import DbRequest, DbOrchestrator
 
 
 class DbServer(TcpServerBase):
@@ -16,17 +16,24 @@ class DbServer(TcpServerBase):
 
     def __init__(
         self,
-        lookup_strategy: LookupStrategy = DbEngine.STRATEGY_LINEAR,
         tcp_nodelay: bool = True,
+        host: str = DB_ENDPOINT.host,
+        port: int = DB_ENDPOINT.port,
+        db_path: Optional[str] = None,
+        shard_index: int = 0,
+        shard_count: int = 1,
     ) -> None:
-        self.endpoint = DB_ENDPOINT
         self.tcp_nodelay = bool(tcp_nodelay)
-        self._db_orchestrator = DbOrchestrator(lookup_strategy=lookup_strategy)
+        self._db_orchestrator = DbOrchestrator(
+            db_path=db_path,
+            shard_index=shard_index,
+            shard_count=shard_count,
+        )
         self._metrics_client = MetricsCollectorClient()
 
         super().__init__(
-            host=str(DB_ENDPOINT.host),
-            port=int(DB_ENDPOINT.port),
+            host=str(host),
+            port=int(port),
             max_connections=200,
             listen_backlog=256,
             worker_pool_size=64,
@@ -66,12 +73,25 @@ class DbServer(TcpServerBase):
                 raise ValueError("Query requires 'hash' hex string")
             return DbRequest("Query", {"hash": hash_hex})
 
+        if operation == "GetById":
+            id_ = req.get("id")
+            if not isinstance(id_, int):
+                raise ValueError("GetById requires 'id' int")
+            return DbRequest("GetById", {"id": id_})
+
         if operation == "Command":
             id_ = req.get("id")
             new_name = req.get("new_name")
             if not isinstance(id_, int) or not isinstance(new_name, str):
                 raise ValueError("Command requires 'id' int and 'new_name' str")
             return DbRequest("Command", {"id": id_, "new_name": new_name})
+
+        if operation == "CommandWithHashes":
+            id_ = req.get("id")
+            new_name = req.get("new_name")
+            if not isinstance(id_, int) or not isinstance(new_name, str):
+                raise ValueError("CommandWithHashes requires 'id' int and 'new_name' str")
+            return DbRequest("CommandWithHashes", {"id": id_, "new_name": new_name})
 
         raise ValueError("unknown op")
 

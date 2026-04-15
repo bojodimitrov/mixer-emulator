@@ -36,7 +36,6 @@ class TestSocketDatabaseServerClient(unittest.TestCase):
 
         patches = [
             patch.object(database_module, "DEFAULT_DB_PATH", self.db_path),
-            patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", self.bpt_path),
         ]
         for p in patches:
             p.start()
@@ -308,7 +307,6 @@ class TestSocketMicroserviceErrorPaths(unittest.TestCase):
 
         patches = [
             patch.object(database_module, "DEFAULT_DB_PATH", self.db_path),
-            patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", self.bpt_path),
         ]
         for p in patches:
             p.start()

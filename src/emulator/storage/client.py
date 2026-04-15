@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ..servers_config import DB_ENDPOINT
 from ..transport_layer.tcp_client import TcpClient
@@ -20,9 +20,10 @@ class DbClient(TcpClient):
         max_lifetime_sec: Optional[float] = None,
         max_retries: int = 1,
         retry_backoff_ms: float = 0.0,
+        endpoint: Optional[TcpEndpoint] = None,
     ) -> None:
         super().__init__(
-            endpoint=TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port)),
+            endpoint=endpoint or TcpEndpoint(DB_ENDPOINT.host, int(DB_ENDPOINT.port)),
             timeout_sec=timeout_sec,
             pool_size=pool_size,
             eager_connect=eager_connect,
@@ -47,6 +48,13 @@ class DbClient(TcpClient):
             raise RuntimeError(resp.get("error") or "db error")
         return resp.get("result")
 
+    def get_by_id(self, id_: int) -> Optional[Tuple[int, str]]:
+        """Fetch a record directly by its global id."""
+        resp = self._request({"op": "GetById", "id": int(id_)})
+        if resp.get("status") != "ok":
+            raise RuntimeError(resp.get("error") or "db error")
+        return resp.get("result")
+
     def command(self, id_: int, new_name_str: str) -> int:
         resp = self._request(
             {"op": "Command", "id": int(id_), "new_name": new_name_str}
@@ -56,4 +64,18 @@ class DbClient(TcpClient):
         result = resp.get("result")
         if isinstance(result, bool) or not isinstance(result, int):
             raise RuntimeError("db command payload was not an integer")
+        return result
+
+    def command_with_hashes(
+        self, id_: int, new_name_str: str
+    ) -> Dict[str, Any]:
+        """Update record; return {updated, old_hash, new_hash} for GSI propagation."""
+        resp = self._request(
+            {"op": "CommandWithHashes", "id": int(id_), "new_name": new_name_str}
+        )
+        if resp.get("status") != "ok":
+            raise RuntimeError(resp.get("error") or "db error")
+        result = resp.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("db CommandWithHashes payload was not a dict")
         return result

@@ -1,15 +1,9 @@
-import os
-import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
 from emulator.microservice.client import MicroserviceClient
-import emulator.storage.engine as database_module
-from emulator.storage.server import DbServer
-from emulator.microservice.server import (
-    MicroserviceServer,
-)
+from emulator.microservice.server import MicroserviceServer
 from emulator.utils import compute_hash_for, id_to_name
 
 
@@ -31,25 +25,11 @@ class _FakeSocket:
 
 class TestSocketDecoupling(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self.temp_dir.name, "test.db")
-        self.bpt_path = os.path.join(self.temp_dir.name, "test.bpt")
+        from tests.db_test_utils import ShardHarness
 
-        patches = [
-            patch.object(database_module, "DEFAULT_DB_PATH", self.db_path),
-            patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", self.bpt_path),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.db = database_module.DbEngine()
-        self.db.ensure_capacity(64)
-        self.db.populate_range(0, 64)
-
-        self.db_server = DbServer()
-        self.db_server.start()
-        self.addCleanup(self.db_server.close)
+        self._shard_harness = ShardHarness(capacity=64, populate_end=64)
+        self._shard_harness.start()
+        self._shard_harness.register_cleanup(self)
 
         self.svc_server = MicroserviceServer(
             latency_ms=0,
@@ -60,9 +40,6 @@ class TestSocketDecoupling(unittest.TestCase):
 
         # crude readiness wait
         time.sleep(0.05)
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
 
     def test_query_and_update_over_sockets(self):
         from emulator.transport_layer.transport import hex_from_bytes
@@ -80,6 +57,9 @@ class TestSocketDecoupling(unittest.TestCase):
         resp2 = client.request("POST", {"id": record_id, "new_name": "zzzzz"}, "/name")
         self.assertEqual(resp2["status"], "ok")
         self.assertEqual(resp2["result"], {"updated": True})
+
+        # Allow the fire-and-forget GSI update to propagate.
+        time.sleep(0.05)
 
         # old hash should no longer match
         resp3 = client.request("GET", {"hash": hex_from_bytes(h)}, "/hash")

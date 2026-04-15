@@ -3,6 +3,7 @@ import json
 import sys
 
 from emulator.storage.engine import DbEngine
+from emulator.storage.constants import SHARD_COUNT, db_shard_path
 
 
 def _print_progress(current: int, total: int) -> None:
@@ -23,10 +24,44 @@ def _print_progress(current: int, total: int) -> None:
 
 
 def get_database_corruption_level(*, show_progress: bool = False) -> dict[str, float | int]:
-    """Read corruption metrics directly from the database engine."""
-    db = DbEngine()
-    progress_callback = _print_progress if show_progress else None
-    return db.get_corruption_level(progress_callback=progress_callback)
+    """Read corruption metrics aggregated across all SHARD_COUNT shard files."""
+    total_records = 0
+    corrupted_records = 0
+
+    for i in range(SHARD_COUNT):
+        path = db_shard_path(i)
+        db = DbEngine(db_path=path, shard_index=i, shard_count=SHARD_COUNT)
+
+        progress_callback = None
+        if show_progress:
+            shard_label = f"shard {i}"
+
+            def _cb(current: int, total: int, _label: str = shard_label) -> None:
+                if total <= 0:
+                    return
+                bar_width = 24
+                ratio = current / total
+                filled = min(bar_width, int(ratio * bar_width))
+                bar = "#" * filled + "-" * (bar_width - filled)
+                print(
+                    f"\r[{_label}] [{bar}] {ratio * 100:5.1f}% {current}/{total}",
+                    end="" if current < total else "\n",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            progress_callback = _cb
+
+        level = db.get_corruption_level(progress_callback=progress_callback)
+        total_records += level["total_records"]
+        corrupted_records += level["corrupted_records"]
+
+    corruption_percent = (corrupted_records / total_records * 100.0) if total_records > 0 else 0.0
+    return {
+        "total_records": total_records,
+        "corrupted_records": corrupted_records,
+        "corruption_percent": round(corruption_percent, 2),
+    }
 
 
 def print_database_corruption_level(*, show_progress: bool = False) -> None:

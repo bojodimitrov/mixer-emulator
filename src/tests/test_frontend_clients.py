@@ -7,24 +7,19 @@ import importlib
 from emulator.frontend.clients import Corrupter, Repairer
 from emulator.microservice.client import MicroserviceClient
 from emulator.microservice.server import MicroserviceServer
-from emulator.storage.engine import DbEngine
-from emulator.storage.server import DbServer
-from tests.db_test_utils import create_seeded_temp_db
 
 
 class _SocketHarness:
     def __init__(self):
-        self.db_paths = None
-        self.db_server = DbServer(
-            lookup_strategy=DbEngine.STRATEGY_BPLUS,
-        )
         self.svc_server = None
+        self._shard_harness = None
 
     def __enter__(self):
-        # Seed a small temp DB so the socket stack returns OK responses.
-        self.db_paths = create_seeded_temp_db(capacity=256, populate_end=256)
+        from tests.db_test_utils import ShardHarness
 
-        self.db_server.start()
+        self._shard_harness = ShardHarness(capacity=256, populate_end=256)
+        self._shard_harness.start()
+
         self.svc_server = MicroserviceServer()
         self.svc_server.start()
         return self
@@ -32,9 +27,8 @@ class _SocketHarness:
     def __exit__(self, exc_type, exc, tb):
         if self.svc_server is not None:
             self.svc_server.close()
-        self.db_server.close()
-        if self.db_paths is not None:
-            self.db_paths.temp_dir.cleanup()
+        if self._shard_harness is not None:
+            self._shard_harness.stop()
 
 
 class _FakeServiceClient:

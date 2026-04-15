@@ -25,7 +25,7 @@ def run_demo(*, seed: int | None = None) -> None:
     if seed is not None:
         random.seed(int(seed))
 
-    db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
+    db = DbEngine()
     total_records = db.record_count()
     if total_records <= 0:
         print("No records found; skipping GET demo.")
@@ -34,7 +34,7 @@ def run_demo(*, seed: int | None = None) -> None:
     calls_count = 10
     record_ids = [random.randrange(total_records) for _ in range(calls_count)]
 
-    db_server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
+    db_server = DbServer()
     db_server.start()
 
     svc_server = MicroserviceServer()

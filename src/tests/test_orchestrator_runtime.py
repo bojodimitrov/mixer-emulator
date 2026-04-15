@@ -1,7 +1,6 @@
 import unittest
 
 from emulator.orchestrator.runtime import SystemOrchestrator
-from emulator.storage.engine import DbEngine
 
 
 class _FakeCacheClient:
@@ -25,7 +24,6 @@ class _FakeThread:
 class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
     def test_get_corrupted_rows_count_returns_zero_when_missing(self):
         orchestrator = SystemOrchestrator(
-            db_lookup_strategy=DbEngine.STRATEGY_LINEAR,
             corrupter_count=0,
             repairer_count=0,
             client_pause_ms=0.0,
@@ -37,7 +35,6 @@ class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
 
     def test_get_corrupted_rows_count_returns_integer_value(self):
         orchestrator = SystemOrchestrator(
-            db_lookup_strategy=DbEngine.STRATEGY_LINEAR,
             corrupter_count=0,
             repairer_count=0,
             client_pause_ms=0.0,
@@ -49,7 +46,6 @@ class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
 
     def test_get_corrupted_rows_count_rejects_non_integer_values(self):
         orchestrator = SystemOrchestrator(
-            db_lookup_strategy=DbEngine.STRATEGY_LINEAR,
             corrupter_count=0,
             repairer_count=0,
             client_pause_ms=0.0,
@@ -62,7 +58,6 @@ class TestSystemOrchestratorCorruptedRows(unittest.TestCase):
 
     def test_get_worker_instance_counts_reports_running_and_configured(self):
         orchestrator = SystemOrchestrator(
-            db_lookup_strategy=DbEngine.STRATEGY_LINEAR,
             corrupter_count=3,
             repairer_count=2,
             client_pause_ms=0.0,

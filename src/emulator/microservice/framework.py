@@ -1,12 +1,16 @@
 import random
+import threading
 import time
 import queue
 from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, Iterable, Tuple, Type
+from typing import Any, Callable, Dict, Iterable, List, Tuple, Type
 
 from emulator.storage.client import DbClient
+from emulator.storage.gsi_client import GsiClient
 from emulator.cache.client import CacheClient
+from emulator.servers_config import SHARD_COUNT, DB_SHARD_ENDPOINTS, GSI_ENDPOINT
+from emulator.transport_layer.transport import TcpEndpoint
 
 
 class Request:
@@ -167,73 +171,127 @@ _HASH_CACHE_TTL_SEC = 10.0
 
 
 class CustomApi(Api):
-    """This where usually Web API frameworks custom code is built."""
+    """GSI-backed sharded API.
 
-    def __init__(self):
+    Read path (GET /hash):
+      1. Check distributed cache (fast path).
+      2. GsiClient.lookup(hash) → global_id.
+      3. Route to shard[global_id % SHARD_COUNT].get_by_id(global_id).
+      4. Cache result.
+
+    Write path (POST /name):
+      1. Route to shard via id % SHARD_COUNT.
+      2. CommandWithHashes → returns {updated, old_hash, new_hash}.
+      3. Evict distributed cache entry.
+      4. Fire-and-forget thread → GsiClient.update() (eventual consistency).
+    """
+
+    def __init__(self) -> None:
         super().__init__()
-        # Service handlers are highly concurrent; keep a connection pool to avoid
-        # creating a fresh outbound DB socket for every single request.
-        # max_idle_sec stays below DbServer conn_timeout_sec (60s) so the pool
-        # proactively discards sockets before the server closes them.
-        self.db_client = DbClient(
-            pool_size=32,
-            eager_connect=False,
-            max_retries=3,
-            retry_backoff_ms=50.0,
-            max_idle_sec=45.0,
+        self._gsi = GsiClient(
+            host=GSI_ENDPOINT.host,
+            port=GSI_ENDPOINT.port,
+            pool_size=8,
         )
-        # Distributed cache shared across all service instances.
-        # Reads: "hash:{hex}" → [id, name] (None on miss, not cached).
-        # Reverse index: "hidx:{id}" → hash_hex, used to evict on write.
+        self._shards: List[DbClient] = [
+            DbClient(
+                endpoint=TcpEndpoint(DB_SHARD_ENDPOINTS[i].host, DB_SHARD_ENDPOINTS[i].port),
+                pool_size=8,
+                eager_connect=False,
+                max_retries=3,
+                retry_backoff_ms=50.0,
+                max_idle_sec=45.0,
+            )
+            for i in range(SHARD_COUNT)
+        ]
         self._cache = CacheClient(
             pool_size=8,
             max_idle_sec=45.0,
         )
 
     def close(self) -> None:
-        self.db_client.close()
-        self._cache.close()
+        with suppress(Exception):
+            self._gsi.close()
+        for shard in self._shards:
+            with suppress(Exception):
+                shard.close()
+        with suppress(Exception):
+            self._cache.close()
 
     def register_routes(self) -> None:
         self.get("/hash")(self.get_by_hash)
         self.post("/name")(self.post_by_id)
 
-    def get_by_hash(self, payload: Dict[str, Any]):
-        hash_hex = payload["hash"]
+    # ── cache helpers ──────────────────────────────────────────────────────
+
+    def _cache_get(self, key: str) -> Any:
         try:
-            cached = self._cache.get(_CACHE_HASH_PREFIX + hash_hex)
+            return self._cache.get(key)
         except Exception:
-            cached = None
+            return None
+
+    def _cache_set(self, key: str, value: Any, ttl_sec: float) -> None:
+        try:
+            self._cache.set(key, value, ttl_sec=ttl_sec)
+        except Exception:
+            pass
+
+    def _cache_delete(self, key: str) -> None:
+        try:
+            self._cache.delete(key)
+        except Exception:
+            pass
+
+    # ── route handlers ─────────────────────────────────────────────────────
+
+    def get_by_hash(self, payload: Dict[str, Any]) -> Any:
+        hash_hex: str = payload["hash"]
+
+        # 1. Cache hit fast path.
+        cached = self._cache_get(_CACHE_HASH_PREFIX + hash_hex)
         if cached is not None:
-            return cached  # already a [id, name] list from JSON
-        result = self.db_client.query(hash_hex)
-        if result is not None:
-            # Only cache hits; misses are fast in the B+ tree.
-            id_, name = result
-            try:
-                self._cache.set(_CACHE_HASH_PREFIX + hash_hex, list(result), ttl_sec=_HASH_CACHE_TTL_SEC)
-                self._cache.set(_CACHE_IDX_PREFIX + str(id_), hash_hex, ttl_sec=_HASH_CACHE_TTL_SEC)
-            except Exception:
-                pass  # cache is best-effort; never block a request
+            return cached
+
+        # 2. GSI lookup: hash → global_id.
+        global_id = self._gsi.lookup(hash_hex)
+        if global_id is None:
+            return None
+
+        # 3. Fetch from the owning shard.
+        result = self._shards[global_id % SHARD_COUNT].get_by_id(global_id)
+        if result is None:
+            return None
+
+        # 4. Populate cache.
+        id_, name = result
+        self._cache_set(_CACHE_HASH_PREFIX + hash_hex, list(result), _HASH_CACHE_TTL_SEC)
+        self._cache_set(_CACHE_IDX_PREFIX + str(id_), hash_hex, _HASH_CACHE_TTL_SEC)
         return result
 
-    @staticmethod
-    def _build_update_response(updated: int) -> Dict[str, bool]:
-        if isinstance(updated, bool) or not isinstance(updated, int):
-            raise RuntimeError("db command result was not an integer")
-        return {"updated": bool(updated)}
+    def post_by_id(self, payload: Dict[str, Any]) -> Dict[str, bool]:
+        id_: int = payload["id"]
+        new_name: str = payload["new_name"]
 
-    def post_by_id(self, payload: Dict[str, Any]):
-        id_ = payload["id"]
-        new_name = payload["new_name"]
-        result = self._build_update_response(self.db_client.command(id_, new_name))
-        if result.get("updated"):
-            # Evict stale hash entry via the reverse index.
-            try:
-                old_hash = self._cache.get(_CACHE_IDX_PREFIX + str(id_))
-                if old_hash is not None:
-                    self._cache.delete(_CACHE_HASH_PREFIX + str(old_hash))
-                    self._cache.delete(_CACHE_IDX_PREFIX + str(id_))
-            except Exception:
-                pass  # cache is best-effort
-        return result
+        info = self._shards[id_ % SHARD_COUNT].command_with_hashes(id_, new_name)
+        updated: bool = bool(info.get("updated"))
+
+        if updated:
+            old_hash: str = info["old_hash"]
+            new_hash: str = info["new_hash"]
+
+            # Evict stale distributed cache entries.
+            self._cache_delete(_CACHE_HASH_PREFIX + old_hash)
+            self._cache_delete(_CACHE_IDX_PREFIX + str(id_))
+
+            # Fire-and-forget GSI update (eventual consistency).
+            gsi = self._gsi
+
+            def _gsi_update() -> None:
+                try:
+                    gsi.update(old_hash, new_hash, id_)
+                except Exception:
+                    pass  # GSI is best-effort; shard is the source of truth
+
+            threading.Thread(target=_gsi_update, daemon=True).start()
+
+        return {"updated": updated}

@@ -1,13 +1,9 @@
-import os
-import tempfile
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-import emulator.storage.engine as database_module
 from emulator.microservice.load_balancer import LoadBalancerServer
 from emulator.microservice.server import MicroserviceServer
-from emulator.storage.server import DbServer
 from emulator.transport_layer.tcp_client import TcpClient
 from emulator.transport_layer.transport import TcpEndpoint
 
@@ -92,25 +88,11 @@ class TestLoadBalancerIntegration(unittest.TestCase):
     """End-to-end: two real MicroserviceServer instances behind a LoadBalancerServer."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        db_path = os.path.join(self.temp_dir.name, "test.db")
-        bpt_path = os.path.join(self.temp_dir.name, "test.bpt")
+        from tests.db_test_utils import ShardHarness
 
-        patches = [
-            patch.object(database_module, "DEFAULT_DB_PATH", db_path),
-            patch.object(database_module, "DEFAULT_BPLUS_INDEX_PATH", bpt_path),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        db = database_module.DbEngine()
-        db.ensure_capacity(64)
-        db.populate_range(0, 64)
-
-        self.db_server = DbServer()
-        self.db_server.start()
-        self.addCleanup(self.db_server.close)
+        self._shard_harness = ShardHarness(capacity=64, populate_end=64)
+        self._shard_harness.start()
+        self._shard_harness.register_cleanup(self)
 
         self.svc1 = MicroserviceServer(
             host="127.0.0.1", port=_SVC_PORT_1, latency_ms=0, pool_size=8
@@ -134,9 +116,6 @@ class TestLoadBalancerIntegration(unittest.TestCase):
         self.addCleanup(self.lb.close)
 
         time.sleep(0.05)
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
 
     def _lb_client(self) -> TcpClient:
         client = TcpClient(

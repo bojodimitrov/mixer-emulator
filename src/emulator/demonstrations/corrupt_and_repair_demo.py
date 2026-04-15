@@ -28,12 +28,10 @@ def run_demo(*, seed: int | None = None) -> None:
     if seed is not None:
         random.seed(int(seed))
 
-    db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
+    db = DbEngine()
     record_id = random.randint(0, max(0, db.record_count() - 1))
 
-    db_server = DbServer(
-        lookup_strategy=DbEngine.STRATEGY_BPLUS,
-    )
+    db_server = DbServer()
     db_server.start()
 
     svc_server = MicroserviceServer()

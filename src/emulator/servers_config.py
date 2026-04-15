@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .storage.constants import SHARD_COUNT
+
 
 @dataclass(frozen=True)
 class DbEndpoint:
@@ -43,6 +45,10 @@ class LoadBalancerEndpoint:
 
 
 DB_ENDPOINT = DbEndpoint()
+GSI_ENDPOINT = DbEndpoint(host="127.0.0.1", port=50010)
+DB_SHARD_ENDPOINTS = [
+    DbEndpoint(host="127.0.0.1", port=50011 + i) for i in range(SHARD_COUNT)
+]
 SERVICE_ENDPOINTS = [
     ServiceEndpoint(port=50100),
     ServiceEndpoint(port=50101),

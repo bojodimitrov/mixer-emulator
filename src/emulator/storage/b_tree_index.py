@@ -9,10 +9,11 @@ from typing import Iterator, List, Optional, Tuple
 from emulator.utils import print_time
 
 from .constants import (
-    DB_RECORD_SIZE,
     INDEX_RECORD_SIZE,
     DEFAULT_BPLUS_INDEX_PATH,
-    DEFAULT_DB_PATH,
+    GSI_INDEX_PATH,
+    SHARD_COUNT,
+    db_shard_path,
 )
 from .external_sort import build_sorted_hash_pairs
 
@@ -106,8 +107,14 @@ class BPlusTreeBuilder:
         out_path: Optional[str] = None,
         chunk_size: int = 200_000,
     ):
-        self.db_path = db_path or DEFAULT_DB_PATH
-        self.out_path = out_path or DEFAULT_BPLUS_INDEX_PATH
+        # When no explicit source is given, read from all shard files.
+        # A single explicit path (e.g. a flat test DB) is wrapped in a list so
+        # build_sorted_hash_pairs always receives a list.
+        if db_path is not None:
+            self.db_paths: List[str] = [db_path]
+        else:
+            self.db_paths = [db_shard_path(i) for i in range(SHARD_COUNT)]
+        self.out_path = out_path or GSI_INDEX_PATH
         self.chunk_size = int(chunk_size)
         self.tmp_dir = os.path.join(os.path.dirname(self.out_path), "tmp_btree")
         os.makedirs(self.tmp_dir, exist_ok=True)
@@ -117,7 +124,7 @@ class BPlusTreeBuilder:
         # Extract and sort (hash, id) pairs from database using external sort
         sorted_pairs_path = os.path.join(self.tmp_dir, "sorted_pairs.tmp")
         total_records = build_sorted_hash_pairs(
-            db_path=self.db_path,
+            db_paths=self.db_paths,
             out_path=sorted_pairs_path,
             tmp_dir=self.tmp_dir,
             chunk_size=self.chunk_size,
@@ -234,10 +241,11 @@ class BPlusTreeIndex:
     def __init__(self, path: Optional[str] = None, writable: bool = False):
         self.path = path or DEFAULT_BPLUS_INDEX_PATH
         mode = "r+b" if writable else "rb"
-        self._file = open(self.path, mode)
+        self._file = open(self.path, mode, buffering=0)
+        self._fd = self._file.fileno()
         self._writable = writable
         self._latch_state = _get_bplus_latch_state(self.path) if writable else None
-        header_data = self._file.read(HEADER_STRUCT.size)
+        header_data = os.pread(self._fd, HEADER_STRUCT.size, 0)
 
         if len(header_data) != HEADER_STRUCT.size:
             self.close()
@@ -261,8 +269,7 @@ class BPlusTreeIndex:
         self._dirty = False
 
     def _reload_header(self) -> None:
-        self._file.seek(0)
-        header_data = self._file.read(HEADER_STRUCT.size)
+        header_data = os.pread(self._fd, HEADER_STRUCT.size, 0)
         if len(header_data) != HEADER_STRUCT.size:
             raise ValueError("invalid B+ tree header")
         (
@@ -318,12 +325,10 @@ class BPlusTreeIndex:
         return page_number
 
     def _read_node_type(self, page_number: int) -> int:
-        self._file.seek(_page_offset(page_number))
-        return struct.unpack("<B", self._file.read(1))[0]
+        return struct.unpack("<B", os.pread(self._fd, 1, _page_offset(page_number)))[0]
 
     def _read_page(self, page_number: int) -> bytes:
-        self._file.seek(_page_offset(page_number))
-        page = self._file.read(PAGE_SIZE)
+        page = os.pread(self._fd, PAGE_SIZE, _page_offset(page_number))
         if len(page) != PAGE_SIZE:
             raise ValueError(f"failed to read page {page_number}")
         return page
@@ -1097,9 +1102,7 @@ class BPlusTreeIndex:
         """Write page data to file."""
         if not self._writable:
             raise RuntimeError("B+ tree is read-only")
-        self._file.seek(_page_offset(page_number))
-        self._file.write(page)
-        self._file.flush()
+        os.pwrite(self._fd, bytes(page), _page_offset(page_number))
 
     def sync(self) -> None:
         """Sync header to disk if any modifications were made."""
@@ -1116,9 +1119,7 @@ class BPlusTreeIndex:
             self.internal_capacity,
             self.first_node_page,
         )
-        self._file.seek(0)
-        self._file.write(header)
-        self._file.flush()
+        os.pwrite(self._fd, header, 0)
         self._dirty = False
 
     def close(self) -> None:

@@ -51,8 +51,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    strategy = DbEngine.STRATEGY_BPLUS
-    db = DbEngine(lookup_strategy=strategy)
+    db = DbEngine()
     count = db.record_count()
     if count == 0:
         print("Database is empty. Run python -m emulator.storage.database first.")
@@ -65,7 +64,7 @@ def main() -> None:
     originals = {id_: db.read_record(id_)[1] for id_ in ids}
     new_names = [_random_name(i) for i in range(updates)]
 
-    print(f"Strategy : {strategy}")
+    print(f"Strategy : linear")
     print(f"Database : {count:,} records")
     print(f"Updates  : {updates} (distinct rows)")
     print()

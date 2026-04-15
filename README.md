@@ -78,9 +78,9 @@ The project uses a src layout. Install it in editable mode or set `PYTHONPATH=sr
 
 Default generated files:
 
-- `db/mixer_emulator_bin.db`: fixed-size record database
-- `db/mixer_emulator.bpt`: B+ tree index
-- `db/tmp_btree/`: temporary chunk files used while building `.bpt`
+- `db/shard_0/records.db` … `db/shard_3/records.db`: sharded record files (each shard holds records where `global_id % 4 == shard_index`)
+- `db/gsi/hash_index.bpt`: Global Secondary Index — flat B+ tree mapping `hash → global_id` across all shards
+- `db/gsi/tmp_btree/`: temporary chunk files used while building the GSI
 
 ## Installation
 
@@ -110,7 +110,7 @@ $env:PYTHONPATH = "src"
 
 ## Usage
 
-Build the database:
+Build the sharded database (4 shard files written in parallel):
 
 ```bash
 python -m emulator.storage.database
@@ -122,7 +122,7 @@ Build a smaller database slice for quick local testing:
 python -m emulator.storage.database --start 0 --end 100000
 ```
 
-Build the B+ tree index:
+Build the GSI (reads all shard files, writes `db/gsi/hash_index.bpt`):
 
 ```bash
 python -m emulator.storage.b_tree_index
@@ -154,20 +154,12 @@ Tune worker counts and pacing:
 python -m emulator.main --corrupters 4 --repairers 2 --client-pause-ms 10
 ```
 
-Choose DB lookup strategy:
-
-```bash
-python -m emulator.main --lookup-strategy bplus
-python -m emulator.main --lookup-strategy linear
-```
-
 Main orchestration flags:
 
 - `--corrupters <int>`: number of corrupter client workers (default: `2`)
 - `--repairers <int>`: number of repairer client workers (default: `2`)
-- `--client-pause-ms <float>`: pause between client operations (default: `20.0`)
+- `--client-pause-ms <float>`: pause between client operations (default: `500.0`)
 - `--ramp-up-step-sec <float>`: seconds between each 20% ramp-up step; `0` disables gradual ramp-up (default: `0.0`)
-- `--lookup-strategy <linear|bplus>`: DB lookup backend (default: `bplus`)
 - `--headless`: print metrics in terminal instead of opening a window
 - `--duration-sec <float>`: optional stop-after duration for headless runs
 
@@ -331,7 +323,11 @@ Default endpoint assignments:
 
 | Component | Address |
 | --------- | ------- |
-| `DbServer` | `127.0.0.1:50001` |
+| `GsiServer` | `127.0.0.1:50010` |
+| `DbServer` shard 0 | `127.0.0.1:50011` |
+| `DbServer` shard 1 | `127.0.0.1:50012` |
+| `DbServer` shard 2 | `127.0.0.1:50013` |
+| `DbServer` shard 3 | `127.0.0.1:50014` |
 | `LoadBalancerServer` | `127.0.0.1:50002` |
 | `MetricsCollectorServer` | `127.0.0.1:50003` |
 | `CacheServer` | `127.0.0.1:50004` |
@@ -339,7 +335,76 @@ Default endpoint assignments:
 
 ### Architecture diagram
 
-This shows the request flow inside `DbServer`, and specifically what `self._thread` does.
+End-to-end request flow through the sharded runtime.
+
+```text
+ Frontend Workers
+ ┌──────────────┐  ┌──────────────┐
+ │  Corrupter   │  │   Repairer   │   (N threads each)
+ └──────┬───────┘  └──────┬───────┘
+        │                 │
+        │  GET /hash  POST /name
+        ▼                 ▼
+ ┌────────────────────────────────┐
+ │       LoadBalancerServer       │  127.0.0.1:50002
+ │  round-robin across instances  │
+ └───────────────┬────────────────┘
+                 │
+       ┌─────────┴──────────┐
+       ▼                    ▼
+ ┌───────────┐       ┌───────────┐
+ │Microservice│  ...  │Microservice│  :50100 – :50103
+ │  Server   │       │  Server   │
+ └─────┬─────┘       └─────┬─────┘
+       │  CustomApi handles each request:
+       │
+       │  GET /hash                    POST /name
+       │  ┌─────────────────────┐      ┌──────────────────────────┐
+       │  │ 1. CacheClient.get  │      │ 1. DbClient[id%4].        │
+       │  │    (hash: prefix)   │      │    command_with_hashes()  │
+       │  │ 2. GsiClient.lookup │      │ 2. CacheClient.delete     │
+       │  │    hash → global_id │      │    (old_hash cache entry) │
+       │  │ 3. DbClient[id%4]   │      │ 3. GsiClient.update()     │
+       │  │    .get_by_id()     │      │    (fire-and-forget)      │
+       │  │ 4. CacheClient.set  │      └──────────────┬───────────┘
+       │  └──────────┬──────────┘                     │
+       │             │                                 │
+       ▼             ▼                                 ▼
+ ┌───────────┐  ┌───────────┐              ┌────────────────────┐
+ │CacheServer│  │ GsiServer │  :50010      │    GsiServer       │  :50010
+ │  :50004   │  │           │              │  (same instance)   │
+ │ key/value │  │BPlusTree  │              │  update(old→new)   │
+ │ TTL store │  │hash→id    │              └────────┬───────────┘
+ └───────────┘  └─────┬─────┘                       │
+                      │ global_id                   │
+                      ▼                             ▼
+             ┌─────────────────────────────────────────────┐
+             │             DbServer shards                  │
+             │                                             │
+             │  shard 0 :50011   shard 1 :50012            │
+             │  shard 2 :50013   shard 3 :50014            │
+             │                                             │
+             │  routed by: global_id % 4                   │
+             └──────────────────┬──────────────────────────┘
+                                │
+                     ┌──────────┴──────────┐
+                     ▼                     ▼
+              ┌────────────┐       ┌────────────┐
+              │ db/shard_0 │  ...  │ db/shard_3 │
+              │ records.db │       │ records.db │
+              └────────────┘       └────────────┘
+
+      db/gsi/hash_index.bpt  (flat B+ tree across all shards)
+      built offline by: python -m emulator.storage.b_tree_index
+
+ Supporting services (always running):
+  MetricsCollectorServer  :50003   (latency, error, transient counters)
+  CacheServer             :50004   (hash→record TTL cache)
+```
+
+#### TCP server internals (`TcpServerBase`)
+
+This shows the request flow inside any server (DbServer, GsiServer, etc.).
 
 ```text
 Caller thread
@@ -347,7 +412,7 @@ Caller thread
   |  start()
   v
 +---------------------------+
-| DbServer                  |
+| TcpServerBase             |
 |  - _sock (listening TCP)  |
 |  - _stop_event            |
 |  - _executor (threadpool) |
@@ -361,11 +426,10 @@ Caller thread
    | target = _serve() |
    +-------------------+
        |
-       | loop:
-       |   accept()  (with timeout)
+       | loop: accept() with timeout
        v
    +-------------------+
-   | new TCP conn      |  (conn socket)
+   | new TCP conn      |
    +-------------------+
        |
        | submit to thread pool
@@ -374,12 +438,10 @@ Caller thread
 | _executor: ThreadPoolExecutor    |  (N worker threads)
 +----------------------------------+
        |
-       | runs in a worker:
        v
    +--------------------------+
    | _handle_conn(conn)       |
-   |  - sets TCP_NODELAY      |
-   |  - sets conn timeout     |
+   |  - TCP_NODELAY           |
    |  - keep-alive loop:      |
    |      recv_message()      |
    |      if op=="Close":     |

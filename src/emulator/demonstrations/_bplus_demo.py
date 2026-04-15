@@ -29,7 +29,7 @@ from ..utils import print_time
 
 def run_socket_bplus_demo() -> None:
     # Pick a random record from the DB (read directly from the on-disk DB file).
-    db = DbEngine(lookup_strategy=DbEngine.STRATEGY_LINEAR)
+    db = DbEngine()
     record_count = db.record_count()
     if record_count <= 0:
         raise RuntimeError(
@@ -39,8 +39,8 @@ def run_socket_bplus_demo() -> None:
     record_id = random.randint(0, record_count - 1)
     _id_read, old_name, old_hash = db.read_record(record_id)
 
-    # Start socket DB server in B+ mode.
-    server = DbServer(lookup_strategy=DbEngine.STRATEGY_BPLUS)
+    # Start socket DB server.
+    server = DbServer()
     server.start()
     try:
         client = DbClient(pool_size=20)

@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import errno
 import threading
 from contextlib import contextmanager
@@ -6,19 +7,19 @@ import mmap
 import os
 import struct
 import time
-from typing import Callable, Dict, Literal, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 from emulator.transport_layer.transport import hex_from_bytes
 
 from ..utils import compute_hash_for, id_to_name, print_time
-from .b_tree_index import BPlusTreeIndex
 from .constants import (
     RECORD_STRUCT,
     RECORD_SIZE,
     DB_HASH_OFFSET,
-    DEFAULT_BPLUS_INDEX_PATH,
     DEFAULT_DB_PATH,
     DB_RECORD_SIZE,
+    SHARD_COUNT,
+    db_shard_path,
 )
 
 # ── Module-level stripe locks ─────────────────────────────────────────────────
@@ -35,12 +36,6 @@ _LOCK_RETRY_DELAY_SEC = 0.01
 
 
 class DbEngine:
-    STRATEGY_LINEAR = "linear"
-    STRATEGY_BPLUS = "bplus"
-    LOOKUP_STRATEGIES = {
-        STRATEGY_LINEAR,
-        STRATEGY_BPLUS,
-    }
 
     """
     Fixed-size-record file DB using mmap + struct.
@@ -62,19 +57,26 @@ class DbEngine:
 
     def __init__(
         self,
-        lookup_strategy: Literal["linear", "bplus"] = STRATEGY_LINEAR,
+        db_path: Optional[str] = None,
+        shard_index: int = 0,
+        shard_count: int = 1,
     ):
-        if lookup_strategy not in self.LOOKUP_STRATEGIES:
-            supported = ", ".join(sorted(self.LOOKUP_STRATEGIES))
-            raise ValueError(
-                f"unsupported lookup_strategy={lookup_strategy!r}; expected one of: {supported}"
-            )
+        if shard_count < 1:
+            raise ValueError("shard_count must be >= 1")
+        if not (0 <= shard_index < shard_count):
+            raise ValueError("shard_index must be in [0, shard_count)")
 
-        self.lookup_strategy = lookup_strategy
-        os.makedirs(os.path.dirname(DEFAULT_DB_PATH) or ".", exist_ok=True)
-        open(DEFAULT_DB_PATH, "a").close()
-        self._lock_path = f"{DEFAULT_DB_PATH}.lock"
+        self._db_path = db_path or DEFAULT_DB_PATH
+        self._shard_index = shard_index
+        self._shard_count = shard_count
+        os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
+        open(self._db_path, "a").close()
+        self._lock_path = f"{self._db_path}.lock"
         open(self._lock_path, "a").close()
+
+    def _local_id(self, global_id: int) -> int:
+        """Map a global record id to its local (file-offset) position in this shard."""
+        return global_id // self._shard_count
 
     @contextmanager
     def _read_lock(self):
@@ -176,30 +178,37 @@ class DbEngine:
 
     def record_count(self) -> int:
         # DbServer owns the file exclusively at runtime; no cross-process lock needed.
-        return os.path.getsize(DEFAULT_DB_PATH) // RECORD_SIZE
+        return os.path.getsize(self._db_path) // RECORD_SIZE
 
     def ensure_capacity(self, capacity: int) -> None:
-        target = capacity * RECORD_SIZE
+        # Number of records owned by this shard: those with global_id % shard_count == shard_index
+        n = max(0, capacity - self._shard_index)
+        shard_local_cap = (n + self._shard_count - 1) // self._shard_count
+        target = shard_local_cap * RECORD_SIZE
         with self._write_lock():
-            with open(DEFAULT_DB_PATH, "ab") as f:
+            with open(self._db_path, "ab") as f:
                 f.tell()
 
-            cur = os.path.getsize(DEFAULT_DB_PATH)
+            cur = os.path.getsize(self._db_path)
             if cur < target:
-                with open(DEFAULT_DB_PATH, "r+b") as f:
+                with open(self._db_path, "r+b") as f:
                     f.truncate(target)
 
     def populate_range(self, start: int, end: int, progress_callback: Optional[callable] = None) -> None:  # type: ignore
-        total = end - start
+        shard_ids = [
+            id_ for id_ in range(start, end)
+            if id_ % self._shard_count == self._shard_index
+        ]
+        total = len(shard_ids)
         with self._write_lock():
-            with open(DEFAULT_DB_PATH, "r+b") as f:
+            with open(self._db_path, "r+b") as f:
                 mm = mmap.mmap(f.fileno(), 0)
                 try:
-                    for i, id_ in enumerate(range(start, end), 1):
+                    for i, id_ in enumerate(shard_ids, 1):
                         name = id_to_name(id_)
                         hashb = compute_hash_for(id_, name)
                         packed = struct.pack(RECORD_STRUCT, id_, name, hashb)
-                        off = id_ * RECORD_SIZE
+                        off = self._local_id(id_) * RECORD_SIZE
                         mm[off : off + RECORD_SIZE] = packed
                         if progress_callback and (i % 10000 == 0 or i == total):
                             progress_callback(i, total)
@@ -207,16 +216,30 @@ class DbEngine:
                     mm.close()
 
     def read_record(self, id_: int) -> Tuple[int, str, str]:
+        local_id = self._local_id(id_)
         with self._row_read_lock(id_):
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
-            if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
+            file_size = os.path.getsize(self._db_path)
+            if local_id * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
-            with open(DEFAULT_DB_PATH, "rb") as f:
-                f.seek(id_ * RECORD_SIZE)
+            with open(self._db_path, "rb") as f:
+                f.seek(local_id * RECORD_SIZE)
                 data = f.read(RECORD_SIZE)
 
         id_read, name_b, hashb = struct.unpack(RECORD_STRUCT, data)
         return id_read, name_b.decode("ascii"), hex_from_bytes(hashb)
+
+    def get_by_id(self, global_id: int) -> Optional[Tuple[int, str]]:
+        """Read a record directly by its global id. Returns (id, name) or None."""
+        local_id = self._local_id(global_id)
+        with self._row_read_lock(global_id):
+            file_size = os.path.getsize(self._db_path)
+            if local_id * RECORD_SIZE + RECORD_SIZE > file_size:
+                return None
+            with open(self._db_path, "rb") as f:
+                f.seek(local_id * RECORD_SIZE)
+                data = f.read(RECORD_SIZE)
+        id_read, name_b, _ = struct.unpack(RECORD_STRUCT, data)
+        return int(id_read), name_b.decode("ascii")
 
     def count_corrupted_records(
         self,
@@ -225,7 +248,7 @@ class DbEngine:
         """Count rows where stored name differs from canonical id_to_name(id)."""
         # No file lock needed: DbServer owns the file; slight staleness is
         # acceptable for metrics scans.
-        file_size = os.path.getsize(DEFAULT_DB_PATH)
+        file_size = os.path.getsize(self._db_path)
 
         if file_size == 0:
             if progress_callback is not None:
@@ -233,7 +256,7 @@ class DbEngine:
             return 0
 
         corrupted = 0
-        with open(DEFAULT_DB_PATH, "rb") as f:
+        with open(self._db_path, "rb") as f:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             try:
                 total_records = len(mm) // RECORD_SIZE
@@ -268,31 +291,25 @@ class DbEngine:
         }
 
     def query_by_hash(self, hash: str) -> Optional[Tuple[int, str]]:
-        if self.lookup_strategy == self.STRATEGY_LINEAR:
-            return self._query_by_hash_linear(hash)
-        return self._query_by_hash_bplus(hash)
+        return self._query_by_hash_linear(hash)
 
     def update_record(self, id_: int, new_name_str: str) -> bool:
-        if self.lookup_strategy == self.STRATEGY_LINEAR:
-            return bool(self._command_update_record_linear(id_, new_name_str))
-        return bool(self._command_update_record_bplus(id_, new_name_str))
+        return bool(self._command_update_record_linear(id_, new_name_str))
 
     def command_update_record(self, id_: int, new_name_str: str) -> int:
-        if self.lookup_strategy == self.STRATEGY_LINEAR:
-            return self._command_update_record_linear(id_, new_name_str)
-        return self._command_update_record_bplus(id_, new_name_str)
+        return self._command_update_record_linear(id_, new_name_str)
 
     def _query_by_hash_linear(self, hash: str) -> Optional[Tuple[int, str]]:
         hash_bytes = bytes.fromhex(hash)
 
         # No file lock: DbServer owns the file; concurrent writes are serialised
         # per-row by stripe locks, making a file-wide LOCK_SH unnecessary.
-        file_size = os.path.getsize(DEFAULT_DB_PATH)
+        file_size = os.path.getsize(self._db_path)
 
         if file_size == 0:
             return None
 
-        with open(DEFAULT_DB_PATH, "rb") as f:
+        with open(self._db_path, "rb") as f:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             try:
                 for off in range(0, len(mm), RECORD_SIZE):
@@ -304,37 +321,19 @@ class DbEngine:
             finally:
                 mm.close()
 
-    def _query_by_hash_bplus(self, hash: str) -> Optional[Tuple[int, str]]:
-        from .b_tree_index import BPlusTreeIndex
-
-        if not os.path.exists(DEFAULT_BPLUS_INDEX_PATH):
-            raise FileNotFoundError(
-                f"B+ tree index file not found: {DEFAULT_BPLUS_INDEX_PATH}"
-            )
-
-        with BPlusTreeIndex() as idx:
-            id_ = idx.query_by_hash(hash)
-            if id_ is None:
-                return None
-            try:
-                id_read, name, _ = self.read_record(id_)
-            except Exception:
-                return None
-            return id_read, name
-
     def _command_update_record_linear(self, id_: int, new_name_str: str) -> int:
         self._validate_name(new_name_str, "new_name_str")
-
+        local_id = self._local_id(id_)
         with self._row_write_lock(id_):
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
-            if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
+            file_size = os.path.getsize(self._db_path)
+            if local_id * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
 
-            record_offset = id_ * RECORD_SIZE
+            record_offset = local_id * RECORD_SIZE
             new_name = new_name_str.encode("ascii")
             new_hash = compute_hash_for(id_, new_name)
 
-            with open(DEFAULT_DB_PATH, "r+b") as f:
+            with open(self._db_path, "r+b") as f:
                 f.seek(record_offset)
                 old_record = f.read(RECORD_SIZE)
                 _, old_name_b, _ = struct.unpack(RECORD_STRUCT, old_record)
@@ -350,102 +349,97 @@ class DbEngine:
 
         return 1
 
-    def _command_update_record_bplus(self, id_: int, new_name_str: str) -> int:
+    def command_update_record_with_hashes(
+        self, id_: int, new_name_str: str
+    ) -> Tuple[int, str, str]:
+        """Update record; return (updated_int, old_hash_hex, new_hash_hex).
+
+        Used by shard servers so the caller (microservice) can propagate the
+        change to the GSI without the DB engine touching the index directly.
+        """
         self._validate_name(new_name_str, "new_name_str")
-
-        if not os.path.exists(DEFAULT_BPLUS_INDEX_PATH):
-            raise FileNotFoundError(
-                f"B+ tree index file not found: {DEFAULT_BPLUS_INDEX_PATH}"
-            )
-
-        new_name = new_name_str.encode("ascii")
-        new_hash = compute_hash_for(id_, new_name)
+        local_id = self._local_id(id_)
 
         with self._row_write_lock(id_):
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
-            if id_ * RECORD_SIZE + RECORD_SIZE > file_size:
+            file_size = os.path.getsize(self._db_path)
+            if local_id * RECORD_SIZE + RECORD_SIZE > file_size:
                 raise IndexError("id out of range")
 
-            record_offset = id_ * RECORD_SIZE
-            with open(DEFAULT_DB_PATH, "r+b") as f:
+            record_offset = local_id * RECORD_SIZE
+            new_name = new_name_str.encode("ascii")
+            new_hash = compute_hash_for(id_, new_name)
+
+            with open(self._db_path, "r+b") as f:
                 f.seek(record_offset)
                 old_record = f.read(RECORD_SIZE)
-                _, old_name_b, old_hash = struct.unpack(RECORD_STRUCT, old_record)
+                _, old_name_b, old_hash_b = struct.unpack(RECORD_STRUCT, old_record)
                 changed = old_name_b != new_name
 
                 if not changed:
-                    return 0
+                    return 0, hex_from_bytes(old_hash_b), hex_from_bytes(old_hash_b)
 
                 packed = struct.pack(RECORD_STRUCT, id_, new_name, new_hash)
-                old_packed = struct.pack(RECORD_STRUCT, id_, old_name_b, old_hash)
-
                 f.seek(record_offset)
                 f.write(packed)
                 f.flush()
 
-                # Update the B+ tree index directly; BPlusTreeIndex handles concurrency.
-                try:
-                    with BPlusTreeIndex(writable=True) as idx:
-                        success = idx.update(old_hash, new_hash, id_)
-                        if not success:
-                            # Roll back DB update when index update cannot be applied.
-                            f.seek(record_offset)
-                            f.write(old_packed)
-                            f.flush()
-                            return 0
-                except Exception:
-                    f.seek(record_offset)
-                    f.write(old_packed)
-                    f.flush()
-                    raise
-
-        return 1
-
-    def update_record_with_bplus_index(self, id_: int, new_name_str: str) -> bool:
-        """
-        Update a record's name and sync the B-tree index.
-
-        Returns True if update succeeded, False if index update failed.
-        Updates both the database file and the B+ tree index.
-        """
-        return bool(self._command_update_record_bplus(id_, new_name_str))
-
+        return 1, hex_from_bytes(old_hash_b), hex_from_bytes(new_hash)
 
 def create_database(start: int = 0, end: int = 11_881_376) -> None:
+    """Build all SHARD_COUNT shard DB files in parallel.
+
+    Each shard i receives records where ``global_id % SHARD_COUNT == i``.
+    The shard files are written to the paths returned by ``db_shard_path(i)``.
+    After this runs, build the GSI with ``python -m emulator.storage.b_tree_index``.
+    """
     if start < 0:
         raise ValueError("start must be non-negative")
     if end < start:
         raise ValueError("end must be greater than or equal to start")
 
-    db = DbEngine()
+    lock = threading.Lock()
+    counters = [0] * SHARD_COUNT
 
-    def _print_progress(i: int, tot: int) -> None:
-        bar_width = 30
-        pct = (i / tot) * 100 if tot else 100.0
-        filled = int((i / tot) * bar_width) if tot else bar_width
-        bar = "#" * filled + "-" * (bar_width - filled)
-        print(
-            f"\r[{bar}] {pct:6.2f}% {i}/{tot}",
-            end="" if i < tot else "\n",
-            flush=True,
-        )
+    def _make_progress(shard_i: int):
+        def _cb(done: int, total: int) -> None:
+            with lock:
+                counters[shard_i] = done
+                overall = sum(counters)
+                total_all = end - start
+                pct = overall / total_all * 100 if total_all else 100.0
+                bar_width = 30
+                filled = int(pct / 100 * bar_width)
+                bar = "#" * filled + "-" * (bar_width - filled)
+                print(
+                    f"\r[{bar}] {pct:5.1f}%  (shard {shard_i}: {done}/{total})",
+                    end="",
+                    flush=True,
+                )
+        return _cb
 
-    print(f"Ensuring capacity for {end} records...", flush=True)
-    db.ensure_capacity(end)
-    print(f"Populating records {start}..{end - 1}", flush=True)
+    def _build_shard(i: int) -> None:
+        path = db_shard_path(i)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        db = DbEngine(db_path=path, shard_index=i, shard_count=SHARD_COUNT)
+        db.ensure_capacity(end)
+        db.populate_range(start, end, _make_progress(i))
 
-    print_time(
-        "Database build",
-        lambda: db.populate_range(
-            start,
-            end,
-            _print_progress,
-        ),
-    )
+    print(f"Building {SHARD_COUNT} shards for records [{start}, {end})...", flush=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SHARD_COUNT) as pool:
+        futures = [pool.submit(_build_shard, i) for i in range(SHARD_COUNT)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()  # re-raise any exception
+    print(flush=True)  # newline after progress bar
+    print(f"Done. Build GSI next: python -m emulator.storage.b_tree_index", flush=True)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the emulator database.")
+    parser = argparse.ArgumentParser(
+        description=(
+            f"Build the {SHARD_COUNT} sharded DB files. "
+            "After this, run `python -m emulator.storage.b_tree_index` to build the GSI."
+        )
+    )
     parser.add_argument(
         "--start",
         type=int,
