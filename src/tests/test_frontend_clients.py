@@ -5,6 +5,7 @@ from typing import Any
 import importlib
 
 from emulator.frontend.clients import Corrupter, Repairer
+from emulator.microservice.client import MicroserviceClient
 from emulator.microservice.server import MicroserviceServer
 from emulator.storage.engine import DbEngine
 from emulator.storage.server import DbServer
@@ -93,7 +94,8 @@ class TestFrontendClientsRunners(unittest.TestCase):
     def test_corrupter_run_once_is_post(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None
-            resp = Corrupter().run_once(record_id=5, new_name="abcde")
+            client = MicroserviceClient(host="127.0.0.1", port=h.svc_server.port, pool_size=1, retry_backoff_ms=5.0)
+            resp = Corrupter(client=client).run_once(record_id=5, new_name="abcde")
             self.assertEqual(resp.get("id"), 5)
             if resp.get("status") == "ok":
                 self.assertEqual(resp.get("new_name"), "abcde")
@@ -132,7 +134,8 @@ class TestFrontendClientsRunners(unittest.TestCase):
     def test_repairer_run_once_attempts_get_first(self):
         with _SocketHarness() as h:
             assert h.svc_server is not None
-            resp = Repairer().run_once(record_id=5)
+            client = MicroserviceClient(host="127.0.0.1", port=h.svc_server.port, pool_size=1, retry_backoff_ms=5.0)
+            resp = Repairer(client=client).run_once(record_id=5)
             self.assertIn(resp.get("action"), {"ok", "repaired"})
 
     def test_repairer_decrements_counter_on_successful_repair(self):

@@ -47,7 +47,7 @@ class DbOrchestrator:
         self,
         lookup_strategy: LookupStrategy = DbEngine.STRATEGY_LINEAR,
         timeout_sec: float = 30.0,
-        pool_size: int = 50,
+        pool_size: int = 64,
     ):
         if pool_size <= 0:
             raise ValueError("pool_size must be positive")

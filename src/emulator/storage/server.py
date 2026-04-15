@@ -27,11 +27,11 @@ class DbServer(TcpServerBase):
         super().__init__(
             host=str(DB_ENDPOINT.host),
             port=int(DB_ENDPOINT.port),
-            max_connections=128,
+            max_connections=200,
             listen_backlog=256,
-            worker_pool_size=32,
+            worker_pool_size=64,
             accept_timeout_sec=1.0,
-            conn_timeout_sec=10.0,
+            conn_timeout_sec=60.0,
             thread_name="socket-db",
             worker_thread_prefix="db-request",
         )

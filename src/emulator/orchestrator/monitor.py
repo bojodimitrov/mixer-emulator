@@ -379,11 +379,11 @@ def _draw_metrics_topology(
             f"last       {snap['service']['last_latency_ms']:.1f} ms",
         ],
     )
-    # Database  x=980  right=1210  mid_y=178
+    # Database  x=980  right=1200  mid_y=254  (aligned with LB and Microservice)
     _draw_group_node(
         canvas,
         x=980,
-        y=112,
+        y=188,
         width=220,
         height=132,
         title="Database",
@@ -397,13 +397,13 @@ def _draw_metrics_topology(
             f"last       {snap['db']['last_latency_ms']:.1f} ms",
         ],
     )
-    # Corruption Cache  x=980  right=1210  mid_y=334
+    # Corruption Cache
     _draw_group_node(
         canvas,
-        x=980,
-        y=268,
-        width=220,
-        height=132,
+        x=258,
+        y=420,
+        width=200,
+        height=120,
         title="Corruption Cache",
         subtitle="frontend-owned derived state",
         badge_text="1",
@@ -419,7 +419,7 @@ def _draw_metrics_topology(
     _draw_group_node(
         canvas,
         x=620,
-        y=446,
+        y=420,
         width=284,
         height=122,
         title="Metrics",
@@ -440,16 +440,16 @@ def _draw_metrics_topology(
     _draw_arrow(canvas, start=(244, 334), end=(340, 272), color="#2a9d8f")
     # Load Balancer → Microservice API
     _draw_arrow(canvas, start=(560, 254), end=(660, 254), color="#457b9d")
-    # Microservice API → Database
-    _draw_arrow(canvas, start=(880, 228), end=(980, 178), color="#457b9d")
-    # Corrupters → Corruption Cache
-    _draw_arrow(canvas, start=(244, 196), end=(980, 310), color="#c89b2c")
-    # Repairers → Corruption Cache
-    _draw_arrow(canvas, start=(244, 352), end=(980, 352), color="#d6a11d")
+    # Microservice API → Database (horizontal, all aligned at mid_y=254)
+    _draw_arrow(canvas, start=(880, 254), end=(980, 254), color="#457b9d")
+    # Corrupters → Corruption Cache (short arrow — cache is now on the left)
+    _draw_arrow(canvas, start=(244, 196), end=(358, 420), color="#c89b2c")
+    # Repairers → Corruption Cache (short arrow)
+    _draw_arrow(canvas, start=(244, 352), end=(358, 420), color="#d6a11d")
     # Dashed metrics arrows
-    _draw_arrow(canvas, start=(146, 244), end=(680, 446), color="#8d5fd3", dashed=True)
-    _draw_arrow(canvas, start=(770, 320), end=(762, 446), color="#8d5fd3", dashed=True)
-    _draw_arrow(canvas, start=(1090, 244), end=(860, 446), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(146, 244), end=(762, 420), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(770, 320), end=(762, 420), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(1090, 320), end=(762, 420), color="#8d5fd3", dashed=True)
 
 
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
@@ -466,7 +466,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
 
     canvas = tk.Canvas(
         root,
-        height=600,
+        height=550,
         bg="#f4f7fb",
         highlightthickness=0,
         bd=0,

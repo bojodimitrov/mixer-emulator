@@ -190,6 +190,11 @@ class Corrupter(FrontendClient):
             get_response = self.get(
                 "/hash", params={"hash": hex_from_bytes(correct_hash)}
             )
+            if get_response.get("status") == "error" and self._metrics_client is not None:
+                self._metrics_client.record_error(
+                    self.service_name,
+                    f"GET /hash → {get_response.get('message', 'service error')}",
+                )
             if (
                 get_response.get("status") == "ok"
                 and get_response.get("result") is None
@@ -202,6 +207,12 @@ class Corrupter(FrontendClient):
             )
 
             ok = isinstance(resp, dict) and resp.get("status") == "ok"
+            if not ok and self._metrics_client is not None:
+                error_msg = resp.get("message", "service error") if isinstance(resp, dict) else str(resp)
+                self._metrics_client.record_error(
+                    self.service_name,
+                    f"POST /name → {error_msg}",
+                )
             result = resp.get("result") if isinstance(resp, dict) else None
             if ok and isinstance(result, dict) and result.get("updated") is True:
                 self._adjust_corrupted_rows(1)
@@ -269,6 +280,11 @@ class Repairer(FrontendClient):
             get_response = self.get(
                 "/hash", params={"hash": hex_from_bytes(correct_hash)}
             )
+            if get_response.get("status") == "error" and self._metrics_client is not None:
+                self._metrics_client.record_error(
+                    self.service_name,
+                    f"GET /hash → {get_response.get('message', 'service error')}",
+                )
             if (
                 get_response.get("status") == "ok"
                 and get_response.get("result") is not None
@@ -284,6 +300,12 @@ class Repairer(FrontendClient):
                 isinstance(repair_response, dict)
                 and repair_response.get("status") == "ok"
             )
+            if not ok and self._metrics_client is not None:
+                error_msg = repair_response.get("message", "service error") if isinstance(repair_response, dict) else str(repair_response)
+                self._metrics_client.record_error(
+                    self.service_name,
+                    f"POST /name → {error_msg}",
+                )
             result = (
                 repair_response.get("result")
                 if isinstance(repair_response, dict)

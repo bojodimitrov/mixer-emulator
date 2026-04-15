@@ -67,7 +67,7 @@ class TestSocketDecoupling(unittest.TestCase):
     def test_query_and_update_over_sockets(self):
         from emulator.transport_layer.transport import hex_from_bytes
 
-        client = MicroserviceClient()
+        client = MicroserviceClient(host="127.0.0.1", port=self.svc_server.port)
 
         record_id = 7
         name_b = id_to_name(record_id)
@@ -87,7 +87,7 @@ class TestSocketDecoupling(unittest.TestCase):
         self.assertIsNone(resp3["result"])
 
     def test_unsupported_method_returns_error(self):
-        client = MicroserviceClient()
+        client = MicroserviceClient(host="127.0.0.1", port=self.svc_server.port)
 
         resp = client.request("PUT", {"id": 7, "new_name": "zzzzz"}, "/name")
         self.assertEqual(resp.get("status"), "error")
@@ -96,7 +96,7 @@ class TestSocketDecoupling(unittest.TestCase):
     def test_unknown_path_returns_error(self):
         from emulator.transport_layer.transport import hex_from_bytes
 
-        client = MicroserviceClient()
+        client = MicroserviceClient(host="127.0.0.1", port=self.svc_server.port)
         record_id = 7
         h = compute_hash_for(record_id, id_to_name(record_id))
 
@@ -107,7 +107,7 @@ class TestSocketDecoupling(unittest.TestCase):
     def test_microservice_client_pool_reuses_socket(self):
         from emulator.transport_layer.transport import hex_from_bytes
 
-        client = MicroserviceClient(pool_size=2)
+        client = MicroserviceClient(pool_size=2, host="127.0.0.1", port=self.svc_server.port)
         self.addCleanup(client.close)
 
         record_id = 7

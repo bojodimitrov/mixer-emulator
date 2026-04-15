@@ -17,9 +17,13 @@ class MicroserviceClient(TcpClient):
         max_idle_sec: Optional[float] = None,
         max_lifetime_sec: Optional[float] = None,
         eager_connect: bool = False,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
     ):
+        _host = host if host is not None else LOAD_BALANCER_ENDPOINT.host
+        _port = port if port is not None else int(LOAD_BALANCER_ENDPOINT.port)
         super().__init__(
-            endpoint=TcpEndpoint(LOAD_BALANCER_ENDPOINT.host, int(LOAD_BALANCER_ENDPOINT.port)),
+            endpoint=TcpEndpoint(_host, _port),
             timeout_sec=timeout_sec,
             pool_size=pool_size,
             eager_connect=eager_connect,

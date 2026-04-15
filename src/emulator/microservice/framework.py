@@ -163,7 +163,15 @@ class CustomApi(Api):
         super().__init__()
         # Service handlers are highly concurrent; keep a connection pool to avoid
         # creating a fresh outbound DB socket for every single request.
-        self.db_client = DbClient(pool_size=128, eager_connect=False)
+        # max_idle_sec stays below DbServer conn_timeout_sec (30s) so the pool
+        # proactively discards sockets before the server closes them.
+        self.db_client = DbClient(
+            pool_size=32,
+            eager_connect=False,
+            max_retries=3,
+            retry_backoff_ms=50.0,
+            max_idle_sec=45.0,
+        )
 
     def close(self) -> None:
         self.db_client.close()

@@ -24,7 +24,8 @@ from .constants import (
 # ── Module-level stripe locks ─────────────────────────────────────────────────
 # Threading locks for in-process row-level mutual exclusion.  256 stripes means
 # only rows that share the same stripe (id % 256) serialise; all other rows run
-# fully in parallel.  The sidecar file locks remain for cross-process bulk ops.
+# fully in parallel.  File-level flock is kept only for bulk startup operations
+# (ensure_capacity, populate_range) which may race with external processes.
 _ROW_LOCK_STRIPES = 256
 _row_stripe_locks: list[threading.Lock] = [
     threading.Lock() for _ in range(_ROW_LOCK_STRIPES)
@@ -174,9 +175,8 @@ class DbEngine:
             raise ValueError(f"{field_name} must be a 5-letter lowercase ASCII word")
 
     def record_count(self) -> int:
-        with self._read_lock():
-            size = os.path.getsize(DEFAULT_DB_PATH)
-            return size // RECORD_SIZE
+        # DbServer owns the file exclusively at runtime; no cross-process lock needed.
+        return os.path.getsize(DEFAULT_DB_PATH) // RECORD_SIZE
 
     def ensure_capacity(self, capacity: int) -> None:
         target = capacity * RECORD_SIZE
@@ -223,31 +223,32 @@ class DbEngine:
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         """Count rows where stored name differs from canonical id_to_name(id)."""
-        with self._read_lock():
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
+        # No file lock needed: DbServer owns the file; slight staleness is
+        # acceptable for metrics scans.
+        file_size = os.path.getsize(DEFAULT_DB_PATH)
 
-            if file_size == 0:
-                if progress_callback is not None:
-                    progress_callback(0, 0)
-                return 0
+        if file_size == 0:
+            if progress_callback is not None:
+                progress_callback(0, 0)
+            return 0
 
-            corrupted = 0
-            with open(DEFAULT_DB_PATH, "rb") as f:
-                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-                try:
-                    total_records = len(mm) // RECORD_SIZE
-                    for index, off in enumerate(range(0, len(mm), RECORD_SIZE), 1):
-                        id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
-                        if name_b != id_to_name(int(id_)):
-                            corrupted += 1
-                        if progress_callback is not None and (
-                            index % 100_000 == 0 or index == total_records
-                        ):
-                            progress_callback(index, total_records)
-                finally:
-                    mm.close()
+        corrupted = 0
+        with open(DEFAULT_DB_PATH, "rb") as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            try:
+                total_records = len(mm) // RECORD_SIZE
+                for index, off in enumerate(range(0, len(mm), RECORD_SIZE), 1):
+                    id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
+                    if name_b != id_to_name(int(id_)):
+                        corrupted += 1
+                    if progress_callback is not None and (
+                        index % 100_000 == 0 or index == total_records
+                    ):
+                        progress_callback(index, total_records)
+            finally:
+                mm.close()
 
-            return corrupted
+        return corrupted
 
     def get_corruption_level(
         self,
@@ -284,23 +285,24 @@ class DbEngine:
     def _query_by_hash_linear(self, hash: str) -> Optional[Tuple[int, str]]:
         hash_bytes = bytes.fromhex(hash)
 
-        with self._read_lock():
-            file_size = os.path.getsize(DEFAULT_DB_PATH)
+        # No file lock: DbServer owns the file; concurrent writes are serialised
+        # per-row by stripe locks, making a file-wide LOCK_SH unnecessary.
+        file_size = os.path.getsize(DEFAULT_DB_PATH)
 
-            if file_size == 0:
+        if file_size == 0:
+            return None
+
+        with open(DEFAULT_DB_PATH, "rb") as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            try:
+                for off in range(0, len(mm), RECORD_SIZE):
+                    hb = mm[off + DB_HASH_OFFSET : off + DB_RECORD_SIZE]
+                    if hb == hash_bytes:
+                        id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
+                        return int(id_), name_b.decode("ascii")
                 return None
-
-            with open(DEFAULT_DB_PATH, "rb") as f:
-                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-                try:
-                    for off in range(0, len(mm), RECORD_SIZE):
-                        hb = mm[off + DB_HASH_OFFSET : off + DB_RECORD_SIZE]
-                        if hb == hash_bytes:
-                            id_, name_b, _ = struct.unpack_from(RECORD_STRUCT, mm, off)
-                            return int(id_), name_b.decode("ascii")
-                    return None
-                finally:
-                    mm.close()
+            finally:
+                mm.close()
 
     def _query_by_hash_bplus(self, hash: str) -> Optional[Tuple[int, str]]:
         from .b_tree_index import BPlusTreeIndex
