@@ -10,6 +10,10 @@ It includes:
 - Two lookup strategies: linear scan and B+ tree index
 - In-process orchestration (`DbOrchestrator`) plus socket server/client layers (`DbServer`, `DbClient`)
 - A microservice layer (`MicroserviceServer`, `MicroserviceClient`) and frontend runners for corruption/repair flows
+- A round-robin TCP load balancer (`LoadBalancerServer`) in front of multiple microservice instances
+- A Redis-like in-memory cache server (`CacheServer`, `CacheClient`) with optional per-key TTL
+- An async metrics collection layer (`MetricsCollectorServer`, `MetricsCollectorClient`)
+- A `FrontendClient` base class with axios-like request helpers shared by `Corrupter` and `Repairer`
 - Writable B+ tree update path with rollback on index update failure
 
 ## Problems that forced evolution
@@ -37,17 +41,31 @@ Pooled sockets are reused without checking if they are still healthy:
 │   ├── emulator/
 │   │   ├── __init__.py
 │   │   ├── main.py
+│   │   ├── servers_config.py
+│   │   ├── utils.py
+│   │   ├── cache/
+│   │   │   ├── client.py
+│   │   │   ├── server.py
+│   │   │   └── store.py
 │   │   ├── frontend/
-│   │   │   ├── ...
+│   │   │   ├── clients.py
+│   │   │   └── loop_cancellation.py
+│   │   ├── metrics/
+│   │   │   ├── collector.py
+│   │   │   ├── corruption.py
+│   │   │   └── runtime_metrics.py
 │   │   ├── microservice/
-│   │   │   ├── ...
+│   │   │   ├── client.py
+│   │   │   ├── framework.py
+│   │   │   ├── load_balancer.py
+│   │   │   └── server.py
 │   │   ├── orchestrator/
-│   │   │   ├── ...
+│   │   │   ├── monitor.py
+│   │   │   └── runtime.py
 │   │   ├── demonstrations/
 │   │   ├── storage/
 │   │   │   ├── ...
-│   │   ├── transport_layer/
-│   │   └── utils.py
+│   │   └── transport_layer/
 │   └── tests/
 ├── pyproject.toml
 ├── requirements.txt
@@ -148,6 +166,7 @@ Main orchestration flags:
 - `--corrupters <int>`: number of corrupter client workers (default: `2`)
 - `--repairers <int>`: number of repairer client workers (default: `2`)
 - `--client-pause-ms <float>`: pause between client operations (default: `20.0`)
+- `--ramp-up-step-sec <float>`: seconds between each 20% ramp-up step; `0` disables gradual ramp-up (default: `0.0`)
 - `--lookup-strategy <linear|bplus>`: DB lookup backend (default: `bplus`)
 - `--headless`: print metrics in terminal instead of opening a window
 - `--duration-sec <float>`: optional stop-after duration for headless runs
@@ -218,6 +237,79 @@ server.close()
 
 `emulator.microservice.framework.Microservice` and `emulator.microservice.client.MicroserviceClient` provide a lightweight service wrapper that can simulate latency and expose GET/POST semantics over TCP.
 
+### `LoadBalancerServer`
+
+`emulator.microservice.load_balancer.LoadBalancerServer` is a round-robin TCP load balancer that distributes incoming requests across multiple microservice instances. It is intentionally decoupled from the microservice lifecycle — it only holds backend addresses and forwards requests; callers are responsible for starting/stopping the backends.
+
+Default listen address: `127.0.0.1:50002` (overridable via constructor).
+
+```python
+from emulator.microservice.load_balancer import LoadBalancerServer
+from emulator.transport_layer.transport import TcpEndpoint
+
+lb = LoadBalancerServer(
+    backends=[TcpEndpoint("127.0.0.1", 50100), TcpEndpoint("127.0.0.1", 50101)]
+)
+lb.start()
+# ... lb.close()
+```
+
+### `CacheServer` / `CacheClient`
+
+`emulator.cache.server.CacheServer` is a small Redis-like TCP key/value store backed by `CacheStore`, a thread-safe in-memory dict with optional per-key TTL.
+
+Default listen address: `127.0.0.1:50004`.
+
+Supported operations via `CacheClient`:
+
+| Operation | Description |
+| --------- | ----------- |
+| `ping()` | Health check |
+| `get(key)` | Retrieve a value (`None` if absent or expired) |
+| `exists(key)` | Check key presence |
+| `mget(keys)` | Bulk get, preserving order |
+| `set(key, value, *, ttl_sec=None)` | Store with optional expiry |
+| `incr(key, amount=1)` | Atomic integer increment (auto-initialises to 0) |
+| `delete(key)` | Remove a key |
+| `flush()` | Clear all keys |
+
+Example:
+
+```python
+from emulator.cache.server import CacheServer
+from emulator.cache.client import CacheClient
+
+server = CacheServer()
+server.start()
+
+client = CacheClient()
+client.set("hits", 0)
+client.incr("hits", 5)
+print(client.get("hits"))  # 5
+client.set("session", {"user": "alice"}, ttl_sec=30.0)
+
+server.close()
+```
+
+The `SystemOrchestrator` uses the cache to track live `corrupted_rows` and `repaired_rows` counters, which are displayed in the headless monitor output.
+
+### `MetricsCollectorServer` / `MetricsCollectorClient`
+
+`emulator.metrics.collector.MetricsCollectorServer` collects per-service latency, error, and transient-pressure events over TCP. `MetricsCollectorClient` batches outgoing records on a background sender thread to avoid blocking the hot path.
+
+Default listen address: `127.0.0.1:50003`.
+
+### `FrontendClient` / `Corrupter` / `Repairer`
+
+`emulator.frontend.clients.FrontendClient` is a shared base class with an axios-like `request()` helper. It accepts either a config dict (`{"method": "POST", "url": "/name", "data": {...}}`) or positional `(method, data, path)` arguments, and delegates to a pooled `MicroserviceClient`.
+
+`Corrupter` and `Repairer` extend `FrontendClient`:
+
+- **`Corrupter.run_once()`** — picks a random record, checks its hash via `GET /hash`, and overwrites the name via `POST /name` to simulate corruption.
+- **`Repairer.run_once()`** — picks a random record, checks via `GET /hash`, and restores the canonical name via `POST /name` if the record is missing or wrong.
+
+Both support a `run_loop()` that repeats the operation with configurable pause and cancellation token.
+
 ## Socket-based Decoupling (DB -> Service -> Frontend)
 
 In addition to the in-process queue-based components, the repo includes a small JSON-over-TCP layer that lets you run the database, microservice, and frontend as separate processes.
@@ -229,6 +321,21 @@ Key modules:
 - `emulator/storage/client.py`: `DbClient`
 - `emulator/microservice/server.py`: `MicroserviceServer`
 - `emulator/microservice/client.py`: `MicroserviceClient`
+- `emulator/microservice/load_balancer.py`: `LoadBalancerServer`
+- `emulator/cache/server.py`: `CacheServer`
+- `emulator/cache/client.py`: `CacheClient`
+- `emulator/metrics/collector.py`: `MetricsCollectorServer` / `MetricsCollectorClient`
+- `emulator/servers_config.py`: centralised endpoint defaults
+
+Default endpoint assignments:
+
+| Component | Address |
+| --------- | ------- |
+| `DbServer` | `127.0.0.1:50001` |
+| `LoadBalancerServer` | `127.0.0.1:50002` |
+| `MetricsCollectorServer` | `127.0.0.1:50003` |
+| `CacheServer` | `127.0.0.1:50004` |
+| `MicroserviceServer` instances | `127.0.0.1:50100–50103` |
 
 ### Architecture diagram
 
@@ -299,8 +406,9 @@ Current test coverage includes:
 - Core database read and linear-hash lookup behavior
 - Concurrent reads across multiple `DbEngine` connections
 - B+ tree build, lookup, insert, delete, update, and small-capacity regression cases
+- `CacheServer` round-trip: Ping, Set, Get, Exists, MGet, Incr, Delete, TTL expiry
 
-The suite currently includes server, client, transport, and storage tests.
+The suite currently includes server, client, transport, storage, cache, load balancer, and frontend client tests.
 
 ## Benchmark Snapshot
 
