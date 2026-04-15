@@ -74,6 +74,17 @@ def _safe_int(value: Any) -> int:
     return int(value)
 
 
+def _format_service_nodes(orchestrator: "SystemOrchestrator", uptime_sec: float) -> list[str]:
+    lines = []
+    for i, srv in enumerate(orchestrator.service_servers):
+        conns = srv._active_connection_count()
+        ops_per_sec = srv.total_handled / max(uptime_sec, 1e-9)
+        lines.append(
+            f"  node[{i}] :{srv.port}  handled={srv.total_handled}  ops/s={ops_per_sec:.2f}  conns={conns}"
+        )
+    return lines
+
+
 def _build_monitor_lines(
     orchestrator: SystemOrchestrator,
     snap: Dict[str, Any],
@@ -82,11 +93,13 @@ def _build_monitor_lines(
 ) -> list[str]:
     return [
         "System Orchestrator",
-        f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | service={orchestrator.service_server.host}:{orchestrator.service_server.port}",
+        f"uptime={snap['uptime_sec']:.1f}s | db={orchestrator.db_server.host}:{orchestrator.db_server.port} | lb={orchestrator.load_balancer.host}:{orchestrator.load_balancer.port} | services={len(orchestrator.service_servers)}",
         format_worker_instances(worker_instances),
         format_corrupted_rows(corrupted_rows),
         format_block("db", snap["db"]),
         format_block("service", snap["service"]),
+        "service nodes:",
+        *_format_service_nodes(orchestrator, snap["uptime_sec"]),
         format_block("corrupter", snap["corrupter"]),
         format_block("repairer", snap["repairer"]),
         *format_transients(snap.get("transient")),
@@ -294,6 +307,7 @@ def _draw_metrics_topology(
     repairer_running = _safe_int(repairer_counts.get("running"))
     repairer_configured = _safe_int(repairer_counts.get("configured"))
 
+    # Corrupters  x=48  right=244  mid_y=178
     _draw_group_node(
         canvas,
         x=48,
@@ -311,6 +325,7 @@ def _draw_metrics_topology(
             f"last       {snap['corrupter']['last_latency_ms']:.1f} ms",
         ],
     )
+    # Repairers  x=48  right=244  mid_y=334
     _draw_group_node(
         canvas,
         x=48,
@@ -328,16 +343,35 @@ def _draw_metrics_topology(
             f"last       {snap['repairer']['last_latency_ms']:.1f} ms",
         ],
     )
+    # Load Balancer  x=340  right=560  mid_y=254
     _draw_group_node(
         canvas,
-        x=336,
+        x=340,
         y=188,
-        width=216,
-        height=136,
-        title="Microservice API",
-        subtitle="request routing",
+        width=220,
+        height=132,
+        title="Load Balancer",
+        subtitle="round-robin proxy",
         badge_text="1",
         badge_caption="node",
+        accent="#f4a261",
+        body_lines=[
+            "strategy   round-robin",
+            "backends   4",
+            "proto      TCP / JSON",
+        ],
+    )
+    # Microservice API (x4)  x=660  right=890  mid_y=254
+    _draw_group_node(
+        canvas,
+        x=660,
+        y=188,
+        width=220,
+        height=132,
+        title="Microservice API",
+        subtitle="request routing",
+        badge_text="4",
+        badge_caption="nodes",
         accent="#457b9d",
         body_lines=[
             f"ops/s      {snap['service']['ops_per_sec']:.2f}",
@@ -345,11 +379,12 @@ def _draw_metrics_topology(
             f"last       {snap['service']['last_latency_ms']:.1f} ms",
         ],
     )
+    # Database  x=980  right=1210  mid_y=178
     _draw_group_node(
         canvas,
-        x=652,
+        x=980,
         y=112,
-        width=216,
+        width=220,
         height=132,
         title="Database",
         subtitle="record store",
@@ -362,11 +397,12 @@ def _draw_metrics_topology(
             f"last       {snap['db']['last_latency_ms']:.1f} ms",
         ],
     )
+    # Corruption Cache  x=980  right=1210  mid_y=334
     _draw_group_node(
         canvas,
-        x=652,
+        x=980,
         y=268,
-        width=216,
+        width=220,
         height=132,
         title="Corruption Cache",
         subtitle="frontend-owned derived state",
@@ -379,9 +415,10 @@ def _draw_metrics_topology(
             "shared across worker groups",
         ],
     )
+    # Metrics  x=620  center_x=762
     _draw_group_node(
         canvas,
-        x=338,
+        x=620,
         y=446,
         width=284,
         height=122,
@@ -397,57 +434,22 @@ def _draw_metrics_topology(
         ],
     )
 
-    _draw_arrow(
-        canvas,
-        start=(244, 176),
-        end=(336, 228),
-        color="#e76f51",
-    )
-    _draw_arrow(
-        canvas,
-        start=(244, 332),
-        end=(336, 284),
-        color="#2a9d8f",
-    )
-    _draw_arrow(
-        canvas,
-        start=(552, 240),
-        end=(652, 176),
-        color="#457b9d",
-    )
-    _draw_arrow(
-        canvas,
-        start=(244, 196),
-        end=(652, 308),
-        color="#c89b2c",
-    )
-    _draw_arrow(
-        canvas,
-        start=(244, 352),
-        end=(652, 352),
-        color="#d6a11d",
-    )
-    _draw_arrow(
-        canvas,
-        start=(146, 244),
-        end=(422, 446),
-        color="#8d5fd3",
-        dashed=True,
-    )
-    _draw_arrow(
-        canvas,
-        start=(444, 324),
-        end=(480, 446),
-        color="#8d5fd3",
-        dashed=True,
-    )
-    _draw_arrow(
-        canvas,
-        start=(760, 244),
-        end=(542, 446),
-        color="#8d5fd3",
-        dashed=True,
-    )
+    # Corrupters → Load Balancer
+    _draw_arrow(canvas, start=(244, 178), end=(340, 236), color="#e76f51")
+    # Repairers → Load Balancer
+    _draw_arrow(canvas, start=(244, 334), end=(340, 272), color="#2a9d8f")
+    # Load Balancer → Microservice API
+    _draw_arrow(canvas, start=(560, 254), end=(660, 254), color="#457b9d")
+    # Microservice API → Database
+    _draw_arrow(canvas, start=(880, 228), end=(980, 178), color="#457b9d")
+    # Corrupters → Corruption Cache
+    _draw_arrow(canvas, start=(244, 196), end=(980, 310), color="#c89b2c")
+    # Repairers → Corruption Cache
+    _draw_arrow(canvas, start=(244, 352), end=(980, 352), color="#d6a11d")
+    # Dashed metrics arrows
+    _draw_arrow(canvas, start=(146, 244), end=(680, 446), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(770, 320), end=(762, 446), color="#8d5fd3", dashed=True)
+    _draw_arrow(canvas, start=(1090, 244), end=(860, 446), color="#8d5fd3", dashed=True)
 
 
 def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
@@ -459,7 +461,7 @@ def run_metrics_window(orchestrator: SystemOrchestrator) -> None:
 
     root = tk.Tk()
     root.title("Mixer Emulator Orchestrator Metrics")
-    root.geometry("1040x820")
+    root.geometry("1600x900")
     root.configure(bg="#f4f7fb")
 
     canvas = tk.Canvas(

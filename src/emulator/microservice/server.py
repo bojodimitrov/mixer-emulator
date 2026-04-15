@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from ..metrics.collector import MetricsCollectorClient
-from ..servers_config import SERVICE_ENDPOINT
 from ..transport_layer.tcp_server_base import (
     ConnState,
     TcpServerBase,
@@ -22,6 +21,8 @@ class MicroserviceServer(TcpServerBase):
     def __init__(
         self,
         *,
+        host: str = "127.0.0.1",
+        port: int = 50100,
         latency_ms: int = 15,
         pool_size: int = 128,
         max_connections: int = 480,
@@ -29,11 +30,12 @@ class MicroserviceServer(TcpServerBase):
     ):
         self._service = Microservice(latency_ms=latency_ms, pool_size=pool_size)
         self._metrics_client = MetricsCollectorClient()
-        self.max_requests_per_connection = 256
+        self.max_requests_per_connection = 4096
+        self.total_handled = 0
 
         super().__init__(
-            host=str(SERVICE_ENDPOINT.host),
-            port=int(SERVICE_ENDPOINT.port),
+            host=str(host),
+            port=int(port),
             max_connections=max_connections,
             listen_backlog=listen_backlog,
             worker_pool_size=128,
@@ -52,6 +54,7 @@ class MicroserviceServer(TcpServerBase):
     def _on_completion(self, state: ConnState, reply: Dict[str, Any]) -> None:
         if isinstance(state, _MicroserviceConnState):
             state.handled += 1
+            self.total_handled += 1
 
     def _close_after_response(self, state: ConnState, reply: Dict[str, Any]) -> bool:
         if isinstance(state, _MicroserviceConnState):

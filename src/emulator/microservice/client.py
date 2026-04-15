@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from emulator.servers_config import SERVICE_ENDPOINT
+from emulator.servers_config import LOAD_BALANCER_ENDPOINT
 from emulator.transport_layer.tcp_client import TcpClient
 from emulator.transport_layer.transport import TcpEndpoint
 
@@ -19,7 +19,7 @@ class MicroserviceClient(TcpClient):
         eager_connect: bool = False,
     ):
         super().__init__(
-            endpoint=TcpEndpoint(SERVICE_ENDPOINT.host, int(SERVICE_ENDPOINT.port)),
+            endpoint=TcpEndpoint(LOAD_BALANCER_ENDPOINT.host, int(LOAD_BALANCER_ENDPOINT.port)),
             timeout_sec=timeout_sec,
             pool_size=pool_size,
             eager_connect=eager_connect,

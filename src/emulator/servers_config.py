@@ -21,7 +21,7 @@ class DbEndpoint:
 @dataclass(frozen=True)
 class ServiceEndpoint:
     host: str = "127.0.0.1"
-    port: int = 50002
+    port: int = 50100
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,19 @@ class CacheEndpoint:
     port: int = 50004
 
 
+@dataclass(frozen=True)
+class LoadBalancerEndpoint:
+    host: str = "127.0.0.1"
+    port: int = 50002
+
+
 DB_ENDPOINT = DbEndpoint()
-SERVICE_ENDPOINT = ServiceEndpoint()
+SERVICE_ENDPOINTS = [
+    ServiceEndpoint(port=50100),
+    ServiceEndpoint(port=50101),
+    ServiceEndpoint(port=50102),
+    ServiceEndpoint(port=50103),
+]
 METRICS_ENDPOINT = MetricsEndpoint()
 CACHE_ENDPOINT = CacheEndpoint()
+LOAD_BALANCER_ENDPOINT = LoadBalancerEndpoint()
